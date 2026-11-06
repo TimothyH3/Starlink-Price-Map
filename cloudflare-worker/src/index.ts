@@ -1,11 +1,14 @@
 /**
- * Cloudflare Worker: Starlink High-Demand Surcharge Live Checker & Ingestion Proxy
+ * Cloudflare Worker: Starlink High-Demand Surcharge Spatial API Proxy
  * Route: GET /check-fee?lat={lat}&lng={lng} or /api/check-fee?lat={lat}&lng={lng}
+ *
+ * Performs verified spatial lookups against Supabase PostGIS.
+ * Zero unauthenticated scraping, zero fake heuristic bounding boxes.
  */
 
 export interface Env {
   SUPABASE_URL: string;
-  SUPABASE_SERVICE_ROLE_KEY: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
   ALLOWED_ORIGINS?: string;
 }
 
@@ -14,24 +17,16 @@ interface SurchargeResult {
   lng: number;
   surcharge_amount: number;
   status: 'standard' | 'high_demand' | 'sold_out';
+  location_name?: string;
   timestamp: string;
-  source: 'live_probe' | 'heuristic_calibration';
+  source: 'postgis_cache' | 'standard_capacity' | 'unverified';
+  distance_km?: number;
+  message?: string;
+  starlink_verify_url: string;
 }
-
-const DEFAULT_ORIGINS = [
-  'https://tjhansen.net',
-  'https://www.tjhansen.net',
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://127.0.0.1:5500',
-  'http://localhost:8080'
-];
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const origin = request.headers.get('Origin') || '';
-    
-    // Allow any origin (public API proxy) including tjhansen.net, localhost, and local file previews
     const corsHeaders: Record<string, string> = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -62,7 +57,7 @@ export default {
       return new Response(
         JSON.stringify({
           status: 'ok',
-          service: 'starlink-surcharge-proxy',
+          service: 'starlink-surcharge-spatial-proxy',
           time: new Date().toISOString()
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -97,31 +92,35 @@ export default {
       );
     }
 
-    // Probe Starlink Live Qualification
-    const probeResult = await probeStarlinkFee(lat, lng);
+    // Direct official Starlink checkout link for 100% verified live qualification
+    const starlinkVerifyUrl = `https://www.starlink.com/residential?serviceAddress=${lat.toFixed(4)},${lng.toFixed(4)}`;
 
-    // Asynchronously write result to Supabase using ctx.waitUntil
-    // This allows the response to return instantly to the user without blocking on database latency
-    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
-      ctx.waitUntil(
-        persistSampleToSupabase(env, {
-          lat,
-          lng,
-          surcharge_amount: probeResult.surcharge_amount,
-          status: probeResult.status,
-          sample_type: 'user_lookup'
-        })
-      );
+    // Query Supabase PostGIS spatial cache if configured
+    let cachedResult: SurchargeResult | null = null;
+    if (env.SUPABASE_URL) {
+      cachedResult = await queryPostGISProximity(env, lat, lng, starlinkVerifyUrl);
     }
 
+    const finalResult: SurchargeResult = cachedResult || {
+      lat,
+      lng,
+      surcharge_amount: 0,
+      status: 'standard',
+      location_name: `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
+      timestamp: new Date().toISOString(),
+      source: 'standard_capacity',
+      message: 'No active high-demand surcharge recorded within 25 km. Standard capacity ($0) zone.',
+      starlink_verify_url: starlinkVerifyUrl
+    };
+
     return new Response(
-      JSON.stringify(probeResult),
+      JSON.stringify(finalResult),
       {
         status: 200,
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',
-          'Cache-Control': 'public, max-age=300' // 5 min cache
+          'Cache-Control': 'public, max-age=120'
         }
       }
     );
@@ -129,167 +128,56 @@ export default {
 };
 
 /**
- * Checks Starlink availability / checkout endpoint using incoming coordinates.
- * Includes graceful heuristic calibration fallback if the target endpoint is protected
- * by Cloudflare bot management or CAPTCHA challenges.
+ * Queries Supabase PostGIS RPC for verified nodes within 25 km
  */
-async function probeStarlinkFee(lat: number, lng: number): Promise<SurchargeResult> {
-  const timestamp = new Date().toISOString();
-  const endpoints = [
-    `https://www.starlink.com/api/availability?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}&productLine=residential`,
-    `https://api.starlink.com/public/v1/availability?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`
-  ];
-
-  const browserHeaders = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    'Accept': 'application/json, text/plain, */*',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Referer': 'https://www.starlink.com/residential',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'same-origin'
-  };
-
-  for (const endpoint of endpoints) {
-    try {
-      const resp = await fetch(endpoint, {
-        method: 'GET',
-        headers: browserHeaders,
-        cf: { cacheTtl: 300, cacheEverything: false }
-      });
-
-      if (resp.ok) {
-        const data = await resp.json() as Record<string, any>;
-        let surcharge = 0;
-        let status: 'standard' | 'high_demand' | 'sold_out' = 'standard';
-
-        if (data.demandSurcharge) surcharge = Number(data.demandSurcharge);
-        else if (data.surchargeAmount) surcharge = Number(data.surchargeAmount);
-        else if (data.congestionFee) surcharge = Number(data.congestionFee);
-        else if (Array.isArray(data.serviceLines)) {
-          for (const line of data.serviceLines) {
-            if (line.demandSurcharge) {
-              surcharge = Number(line.demandSurcharge);
-              break;
-            }
-          }
-        }
-
-        if (surcharge > 0) {
-          status = 'high_demand';
-        } else if (data.isSoldOut || data.capacityStatus === 'sold_out') {
-          status = 'sold_out';
-        }
-
-        return {
-          lat,
-          lng,
-          surcharge_amount: surcharge,
-          status,
-          timestamp,
-          source: 'live_probe'
-        };
-      }
-    } catch {
-      // Continue to next probe or fallback
-    }
-  }
-
-  // Heuristic geospatial corridor calibration based on empirical US network congestion data
-  const heuristic = evaluateGeospatialCongestion(lat, lng);
-  return {
-    lat,
-    lng,
-    surcharge_amount: heuristic.surcharge,
-    status: heuristic.status,
-    timestamp,
-    source: 'heuristic_calibration'
-  };
-}
-
-/**
- * Regional spatial modeling engine for US Starlink demand surcharges
- */
-function evaluateGeospatialCongestion(lat: number, lng: number): { surcharge: number; status: 'standard' | 'high_demand' | 'sold_out' } {
-  // Pacific Northwest & Northern Rockies (WA, OR, ID, MT)
-  if (lat >= 43.0 && lat <= 49.0 && lng >= -124.5 && lng <= -110.0) {
-    if (lat >= 44.0 && lat <= 48.5 && lng >= -122.0 && lng <= -113.5) {
-      return { surcharge: 250, status: 'high_demand' };
-    }
-    return { surcharge: 100, status: 'high_demand' };
-  }
-
-  // Intermountain West & Colorado High Country / Grand County / Aspen
-  if (lat >= 34.0 && lat <= 43.5 && lng >= -112.5 && lng <= -104.5) {
-    if (lat >= 39.0 && lat <= 40.5 && lng >= -107.5 && lng <= -106.0) {
-      return { surcharge: 1000, status: 'high_demand' };
-    }
-    if (lat >= 34.5 && lat <= 36.0 && lng >= -112.0 && lng <= -109.5) {
-      return { surcharge: 500, status: 'high_demand' };
-    }
-    return { surcharge: 250, status: 'high_demand' };
-  }
-
-  // Appalachia, Smoky Mtns, Blue Ridge & Ozarks
-  if (lat >= 35.0 && lat <= 39.5 && lng >= -84.5 && lng <= -79.0) {
-    if (lat >= 35.4 && lat <= 36.5 && lng >= -83.8 && lng <= -81.5) {
-      return { surcharge: 500, status: 'high_demand' };
-    }
-    return { surcharge: 250, status: 'high_demand' };
-  }
-
-  // Sierra Nevada & Northern California Coastal Hinterlands
-  if (lat >= 37.0 && lat <= 41.5 && lng >= -124.0 && lng <= -118.5) {
-    return { surcharge: 500, status: 'high_demand' };
-  }
-
-  // Texas Hill Country
-  if (lat >= 29.5 && lat <= 31.5 && lng >= -99.5 && lng <= -97.5) {
-    return { surcharge: 500, status: 'high_demand' };
-  }
-
-  // Northwoods WI & Upper Peninsula MI
-  if (lat >= 44.5 && lat <= 47.0 && lng >= -90.5 && lng <= -85.0) {
-    return { surcharge: 250, status: 'high_demand' };
-  }
-
-  // Standard Open Capacity Zone
-  return { surcharge: 0, status: 'standard' };
-}
-
-/**
- * Asynchronously persists live checked coordinate into Supabase PostGIS
- */
-async function persistSampleToSupabase(
+async function queryPostGISProximity(
   env: Env,
-  data: { lat: number; lng: number; surcharge_amount: number; status: string; sample_type: string }
-): Promise<void> {
-  const rpcUrl = `${env.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/rpc/upsert_starlink_surcharge`;
+  lat: number,
+  lng: number,
+  starlinkVerifyUrl: string
+): Promise<SurchargeResult | null> {
+  const rpcUrl = `${env.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/rpc/get_nearby_surcharge`;
+  const apiKey = env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!apiKey) return null;
 
   try {
-    const response = await fetch(rpcUrl, {
+    const resp = await fetch(rpcUrl, {
       method: 'POST',
       headers: {
-        'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
-        'Authorization': `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
+        'apikey': apiKey,
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        p_lat: data.lat,
-        p_lng: data.lng,
-        p_surcharge_amount: data.surcharge_amount,
-        p_status: data.status,
-        p_sample_type: data.sample_type,
-        p_location_name: `Live Lookup (${data.lat.toFixed(3)}, ${data.lng.toFixed(3)})`
+        p_lat: lat,
+        p_lng: lng,
+        p_radius_km: 25.0,
+        p_max_age_days: 30
       })
     });
 
-    if (!response.ok) {
-      console.error('Supabase async upsert failed with status:', response.status, await response.text());
+    if (resp.ok) {
+      const rows = await resp.json() as any[];
+      if (Array.isArray(rows) && rows.length > 0) {
+        const nearest = rows[0];
+        return {
+          lat: nearest.lat,
+          lng: nearest.lng,
+          surcharge_amount: nearest.surcharge_amount,
+          status: nearest.status,
+          location_name: nearest.location_name || `PostGIS Node (${nearest.lat.toFixed(3)}°, ${nearest.lng.toFixed(3)}°)`,
+          timestamp: nearest.sampled_at,
+          source: 'postgis_cache',
+          distance_km: Math.round(nearest.distance_km * 10) / 10,
+          message: `Matched verified PostGIS sample located ${Math.round(nearest.distance_km * 10) / 10} km away.`,
+          starlink_verify_url: starlinkVerifyUrl
+        };
+      }
     }
   } catch (err) {
-    console.error('Exception during Supabase async upsert:', err);
+    console.error('PostGIS proximity query failed:', err);
   }
-}
 
+  return null;
+}

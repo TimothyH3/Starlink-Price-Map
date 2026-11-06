@@ -199,16 +199,24 @@
 
             <!-- Live Worker Trigger Action -->
             <div class="card-actions">
+              <a
+                :href="`https://www.starlink.com/residential?serviceAddress=${inspectedLocation.lat.toFixed(4)},${inspectedLocation.lng.toFixed(4)}`"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="starlink-verify-link font-mono"
+              >
+                <span>🚀 VERIFY ON STARLINK.COM ↗</span>
+              </a>
               <button
                 @click="triggerLiveWorkerCheck(inspectedLocation.lat, inspectedLocation.lng)"
-                class="live-check-btn font-mono"
+                class="worker-secondary-btn font-mono"
                 :disabled="isCheckingLive"
               >
                 <span v-if="isCheckingLive" class="spinner"></span>
-                <span>{{ isCheckingLive ? 'QUERYING STARLINK...' : '⚡ CHECK EXACT LIVE SURCHARGE' }}</span>
+                <span>{{ isCheckingLive ? 'QUERYING POSTGIS...' : '📡 QUERY POSTGIS SPATIAL CACHE' }}</span>
               </button>
               <p class="live-check-note font-sans">
-                Queries Cloudflare Worker API proxy to probe live Starlink qualification and caches into PostGIS.
+                Starlink manages surcharges by hexagonal cell. Click above to view official live checkout pricing for your address on Starlink.com.
               </p>
             </div>
           </div>
@@ -663,14 +671,16 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
         surcharge_amount: result.surcharge_amount,
         status: result.status,
         sampled_at: result.timestamp || new Date().toISOString(),
-        location_name: `Verified Live: ${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W`,
-        proximity_km: 0
+        location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
+        proximity_km: result.distance_km || 0
       };
 
       inspectedLocation.value = updatedRecord;
-      rawSurchargeData.unshift(updatedRecord);
-      computeStats();
-      renderMarkers();
+      if (result.source === 'postgis_cache') {
+        rawSurchargeData.unshift(updatedRecord);
+        computeStats();
+        renderMarkers();
+      }
       dropRadarPin(lat, lng);
     } else {
       let errBody = '';
@@ -1223,6 +1233,54 @@ onBeforeUnmount(() => {
 .card-actions {
   padding: 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.starlink-verify-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 11px 14px;
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  border: 1px solid rgba(96, 165, 250, 0.4);
+  color: #ffffff;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  transition: all 180ms ease;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+.starlink-verify-link:hover {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.4);
+  color: #ffffff;
+}
+
+.worker-secondary-btn {
+  width: 100%;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #94a3b8;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 180ms ease;
+}
+.worker-secondary-btn:hover:not(:disabled) {
+  background: rgba(56, 189, 248, 0.08);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.3);
 }
 
 .live-check-btn {
