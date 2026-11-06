@@ -199,24 +199,16 @@
 
             <!-- Live Worker Trigger Action -->
             <div class="card-actions">
-              <a
-                :href="`https://www.starlink.com/residential?serviceAddress=${inspectedLocation.lat.toFixed(4)},${inspectedLocation.lng.toFixed(4)}`"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="starlink-verify-link font-mono"
-              >
-                <span>🚀 VERIFY ON STARLINK.COM ↗</span>
-              </a>
               <button
                 @click="triggerLiveWorkerCheck(inspectedLocation.lat, inspectedLocation.lng)"
-                class="worker-secondary-btn font-mono"
+                class="live-check-btn font-mono"
                 :disabled="isCheckingLive"
               >
                 <span v-if="isCheckingLive" class="spinner"></span>
-                <span>{{ isCheckingLive ? 'QUERYING POSTGIS...' : '📡 QUERY POSTGIS SPATIAL CACHE' }}</span>
+                <span>{{ isCheckingLive ? 'QUERYING POSTGIS...' : '⚡ QUERY SPATIAL CELL CACHE' }}</span>
               </button>
               <p class="live-check-note font-sans">
-                Starlink manages surcharges by hexagonal cell. Click above to view official live checkout pricing for your address on Starlink.com.
+                PostGIS spatial engine evaluates proximity to known verified Starlink capacity cells.
               </p>
             </div>
           </div>
