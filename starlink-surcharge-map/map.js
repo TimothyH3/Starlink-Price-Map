@@ -7,11 +7,16 @@
   'use strict';
 
   // Config: Override with window.STARLINK_CONFIG or localStorage if present
-  const savedWorkerUrl = localStorage.getItem('starlink_worker_url');
+  let savedWorkerUrl = localStorage.getItem('starlink_worker_url');
+  if (savedWorkerUrl && savedWorkerUrl.includes('tjhansen.workers.dev')) {
+    savedWorkerUrl = 'https://starlink-surcharge-worker.starlink-surcharge-map.workers.dev/api/check-fee';
+    localStorage.setItem('starlink_worker_url', savedWorkerUrl);
+  }
+
   const CONFIG = Object.assign({
-    SUPABASE_URL: 'https://ezklclyctsuwfmfdrnex.supabase.co',
+    SUPABASE_URL: 'https://lbwwynyvpvecgclvyqrv.supabase.co',
     SUPABASE_ANON_KEY: 'eyJhbGciOi...',
-    WORKER_API_URL: savedWorkerUrl || (window.STARLINK_CONFIG && window.STARLINK_CONFIG.WORKER_API_URL) || 'https://starlink-surcharge-worker.tjhansen.workers.dev/api/check-fee'
+    WORKER_API_URL: savedWorkerUrl || (window.STARLINK_CONFIG && window.STARLINK_CONFIG.WORKER_API_URL) || 'https://starlink-surcharge-worker.starlink-surcharge-map.workers.dev/api/check-fee'
   }, window.STARLINK_CONFIG || {});
 
   // High-fidelity baseline seed points across US bottleneck corridors

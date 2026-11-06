@@ -277,12 +277,18 @@ interface SurchargeRecord {
 }
 
 // Configurable Endpoints
-const SUPABASE_URL = (window as any).STARLINK_CONFIG?.SUPABASE_URL || 'https://ezklclyctsuwfmfdrnex.supabase.co';
+const SUPABASE_URL = (window as any).STARLINK_CONFIG?.SUPABASE_URL || 'https://lbwwynyvpvecgclvyqrv.supabase.co';
 const SUPABASE_ANON_KEY = (window as any).STARLINK_CONFIG?.SUPABASE_ANON_KEY || 'public-anon-key';
+let savedWorkerUrl = localStorage.getItem('starlink_worker_url');
+if (savedWorkerUrl && savedWorkerUrl.includes('tjhansen.workers.dev')) {
+  savedWorkerUrl = 'https://starlink-surcharge-worker.starlink-surcharge-map.workers.dev/api/check-fee';
+  localStorage.setItem('starlink_worker_url', savedWorkerUrl);
+}
+
 const workerApiUrl = ref(
-  localStorage.getItem('starlink_worker_url') ||
+  savedWorkerUrl ||
   (window as any).STARLINK_CONFIG?.WORKER_API_URL ||
-  'https://starlink-surcharge-worker.tjhansen.workers.dev/api/check-fee'
+  'https://starlink-surcharge-worker.starlink-surcharge-map.workers.dev/api/check-fee'
 );
 
 // Reactive State
