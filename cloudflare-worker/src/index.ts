@@ -30,17 +30,13 @@ const DEFAULT_ORIGINS = [
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const origin = request.headers.get('Origin') || '';
-    const allowedOrigins = env.ALLOWED_ORIGINS 
-      ? env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-      : DEFAULT_ORIGINS;
-
-    const isAllowed = allowedOrigins.includes(origin) || allowedOrigins.includes('*') || origin.endsWith('.tjhansen.net');
+    
+    // Allow any origin (public API proxy) including tjhansen.net, localhost, and local file previews
     const corsHeaders: Record<string, string> = {
-      'Access-Control-Allow-Origin': isAllowed ? origin : allowedOrigins[0],
+      'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      'Access-Control-Max-Age': '86400',
-      'Vary': 'Origin'
+      'Access-Control-Max-Age': '86400'
     };
 
     // Handle CORS Preflight

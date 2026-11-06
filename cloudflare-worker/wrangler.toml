@@ -8,5 +8,5 @@ compatibility_flags = ["nodejs_compat"]
 SUPABASE_URL = "https://lbwwynyvpvecgclvyqrv.supabase.co"
 
 # Set CORS origins
-ALLOWED_ORIGINS = "https://tjhansen.net,https://www.tjhansen.net,http://localhost:5173,http://localhost:3000,http://127.0.0.1:5500"
+ALLOWED_ORIGINS = "*"
 
