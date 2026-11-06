@@ -277,7 +277,7 @@ interface SurchargeRecord {
 }
 
 // Configurable Endpoints
-const SUPABASE_URL = (window as any).STARLINK_CONFIG?.SUPABASE_URL || 'https://xyz.supabase.co';
+const SUPABASE_URL = (window as any).STARLINK_CONFIG?.SUPABASE_URL || 'https://ezklclyctsuwfmfdrnex.supabase.co';
 const SUPABASE_ANON_KEY = (window as any).STARLINK_CONFIG?.SUPABASE_ANON_KEY || 'public-anon-key';
 const workerApiUrl = ref(
   localStorage.getItem('starlink_worker_url') ||
