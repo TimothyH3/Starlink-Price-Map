@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Starlink High-Demand Congestion Surcharge Tracker</title>
+  <script>
+    // SPA GitHub Pages Redirect Receiver
+    // Checks if a redirect query exists from 404.html
+    (function(l) {
+      if (l.search[1] === '/' ) {
+        var decoded = l.search.slice(1).split('&').map(function(s) { 
+          return s.replace(/~and~/g, '&');
+        }).join('?');
+        var target = l.pathname.slice(0, -1) + decoded + l.hash;
+        window.history.replaceState(null, null, target);
+      }
+      // Redirect to map subpage if on root of standalone repo
+      if (window.location.pathname === '/' || window.location.pathname.endsWith('/index.html')) {
+        window.location.replace('./starlink-surcharge-map/');
+      }
+    }(window.location));
+  </script>
+  <meta http-equiv="refresh" content="0; url=./starlink-surcharge-map/">
+</head>
+<body style="background-color: #07090E; color: #F1F5F9; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0;">
+  <p>Loading Starlink Surcharge Map... <a href="./starlink-surcharge-map/" style="color: #38BDF8;">Click here if not redirected</a>.</p>
+</body>
+</html>

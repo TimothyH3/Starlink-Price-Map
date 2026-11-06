@@ -1,0 +1,36 @@
+{
+  "name": "starlink-high-demand-location-map",
+  "version": "1.0.0",
+  "description": "Interactive real-time map application tracking Starlink High-Demand Congestion Surcharges across the United States",
+  "main": "starlink-surcharge-map/index.html",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "serve": "npx serve .",
+    "sample": "python scripts/sample_demand.py"
+  },
+  "keywords": [
+    "starlink",
+    "congestion-surcharge",
+    "postgis",
+    "supabase",
+    "maplibre",
+    "leaflet",
+    "geospatial",
+    "cloudflare-worker"
+  ],
+  "author": "Timothy Hansen",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "leaflet": "^1.9.4",
+    "vue": "^3.5.11",
+    "vue-router": "^4.4.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.1.4",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8"
+  }
+}
