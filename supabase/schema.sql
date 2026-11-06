@@ -278,3 +278,4 @@ DO UPDATE SET
     location_name = EXCLUDED.location_name;
 
 -- Completed Supabase Schema Setup.
+

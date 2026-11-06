@@ -31,7 +31,7 @@ The system operates on a 100% free-tier serverless architecture:
 
 1. **Frontend Map UI (`/starlink-surcharge-map`):**
    - High-contrast, cybernetic dark theme matching `tjhansen.net` (`#07090E`, JetBrains Mono, Inter).
-   - CartoDB Dark Matter basemap (zero API key dependency, unlimited free usage).
+   - Esri World Dark Gray Canvas basemap + Reference labels (100% free, zero API key dependency, zero watermarks).
    - Tiered color visualization:
      - **$0 Standard**: Soft Cyan (`#22d3ee`)
      - **$100–$250 Surcharge**: Yellow (`#facc15`)
@@ -173,3 +173,4 @@ npm run dev
 
 ## License
 MIT License. Built by [Timothy Hansen](https://tjhansen.net).
+

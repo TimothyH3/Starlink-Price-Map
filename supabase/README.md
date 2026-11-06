@@ -23,3 +23,4 @@ From your Supabase Project Settings (**Settings** -> **API**):
 * **Project URL**: `https://<your-project-ref>.supabase.co`
 * **Anon Key (Public)**: `eyJhbGciOi...` (Configured in frontend map client)
 * **Service Role Key (Secret)**: `eyJhbGciOi...` (Configured in GitHub Secrets & Cloudflare Worker)
+

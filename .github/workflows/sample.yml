@@ -38,3 +38,4 @@ jobs:
           DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
           python scripts/sample_demand.py
+

@@ -37,3 +37,4 @@ The workflow at `.github/workflows/sample.yml` automatically triggers:
 Configure the following GitHub repository secrets:
 * `SUPABASE_URL`
 * `SUPABASE_SERVICE_ROLE_KEY`
+
