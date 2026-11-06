@@ -657,21 +657,33 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
 
     if (resp.ok) {
       const result = await resp.json();
-      const updatedRecord: SurchargeRecord = {
-        lat: result.lat,
-        lng: result.lng,
-        surcharge_amount: result.surcharge_amount,
-        status: result.status,
-        sampled_at: result.timestamp || new Date().toISOString(),
-        location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
-        proximity_km: result.distance_km || 0
-      };
-
-      inspectedLocation.value = updatedRecord;
       if (result.source === 'postgis_cache') {
+        const updatedRecord: SurchargeRecord = {
+          lat: result.lat,
+          lng: result.lng,
+          surcharge_amount: result.surcharge_amount,
+          status: result.status,
+          sampled_at: result.timestamp || new Date().toISOString(),
+          location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
+          proximity_km: result.distance_km || 0
+        };
+        inspectedLocation.value = updatedRecord;
         rawSurchargeData.unshift(updatedRecord);
         computeStats();
         renderMarkers();
+      } else {
+        // If already inspecting a known node, keep its existing data
+        if (!inspectedLocation.value || inspectedLocation.value.surcharge_amount === 0) {
+          inspectedLocation.value = {
+            lat: result.lat,
+            lng: result.lng,
+            surcharge_amount: result.surcharge_amount,
+            status: result.status,
+            sampled_at: result.timestamp || new Date().toISOString(),
+            location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
+            proximity_km: 0
+          };
+        }
       }
       dropRadarPin(lat, lng);
     } else {
