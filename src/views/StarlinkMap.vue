@@ -129,8 +129,50 @@
         <div class="sidebar-section">
           <h2 class="sidebar-heading font-mono">SELECTION INSPECTOR</h2>
 
+          <!-- Live Query Diagnostic Error Card -->
+          <div v-if="liveQueryError" class="inspector-card card-error">
+            <div class="card-status-banner banner-high_demand">
+              <span class="banner-title font-mono">⚠️ LIVE QUERY FAILED</span>
+              <span class="banner-surcharge font-mono">OFFLINE</span>
+            </div>
+
+            <div class="card-details font-mono">
+              <div class="error-detail-box">
+                <div class="error-detail-title">FAILURE DIAGNOSTIC:</div>
+                <div class="error-detail-msg">{{ liveQueryError.message }}</div>
+                <div class="error-endpoint-row">
+                  <span>ENDPOINT PROBED:</span>
+                  <code class="endpoint-code">{{ liveQueryError.endpoint }}</code>
+                </div>
+              </div>
+
+              <div class="worker-config-panel">
+                <label class="config-label font-sans">Worker API Endpoint URL:</label>
+                <div class="config-input-group">
+                  <input type="text" v-model="workerApiUrl" class="font-mono config-url-input" placeholder="http://localhost:8787/api/check-fee" />
+                  <button @click="saveWorkerUrl" class="font-mono config-save-btn">SAVE</button>
+                </div>
+                <div class="config-help font-sans">
+                  • <strong>Local test:</strong> Run <code>cd cloudflare-worker && npm run dev</code><br/>
+                  • <strong>Deploy live:</strong> Run <code>cd cloudflare-worker && npm run deploy</code>
+                </div>
+              </div>
+            </div>
+
+            <div class="card-actions">
+              <button
+                @click="retryLiveWorkerCheck"
+                class="live-check-btn font-mono"
+                :disabled="isCheckingLive"
+              >
+                <span v-if="isCheckingLive" class="spinner"></span>
+                <span>{{ isCheckingLive ? 'QUERYING...' : '🔄 RETRY LIVE CHECK' }}</span>
+              </button>
+            </div>
+          </div>
+
           <!-- Active Inspected Pin Card -->
-          <div v-if="inspectedLocation" class="inspector-card">
+          <div v-else-if="inspectedLocation" class="inspector-card">
             <div class="card-status-banner" :class="'banner-' + inspectedLocation.status">
               <span class="banner-title font-mono">{{ getStatusTitle(inspectedLocation) }}</span>
               <span class="banner-surcharge font-mono">${{ inspectedLocation.surcharge_amount }}</span>
@@ -237,7 +279,11 @@ interface SurchargeRecord {
 // Configurable Endpoints
 const SUPABASE_URL = (window as any).STARLINK_CONFIG?.SUPABASE_URL || 'https://xyz.supabase.co';
 const SUPABASE_ANON_KEY = (window as any).STARLINK_CONFIG?.SUPABASE_ANON_KEY || 'public-anon-key';
-const WORKER_API_URL = (window as any).STARLINK_CONFIG?.WORKER_API_URL || 'https://starlink-surcharge-worker.tjhansen.workers.dev/api/check-fee';
+const workerApiUrl = ref(
+  localStorage.getItem('starlink_worker_url') ||
+  (window as any).STARLINK_CONFIG?.WORKER_API_URL ||
+  'https://starlink-surcharge-worker.tjhansen.workers.dev/api/check-fee'
+);
 
 // Reactive State
 const mapCanvas = ref<HTMLElement | null>(null);
@@ -247,6 +293,7 @@ const searchResults = ref<any[]>([]);
 const supabaseOnline = ref(false);
 const isCheckingLive = ref(false);
 const inspectedLocation = ref<SurchargeRecord | null>(null);
+const liveQueryError = ref<{ message: string; endpoint: string; lat: number; lng: number } | null>(null);
 const filteredCount = ref(0);
 
 const tierFilters = reactive({
@@ -576,93 +623,77 @@ function dropRadarPin(lat: number, lng: number) {
   activePinMarker = L.marker([lat, lng], { icon: radarIcon }).addTo(mapInstance);
 }
 
-// Calibrated Corridor Heuristic Fallback (when Worker is not yet deployed)
-function estimateCorridorSurcharge(lat: number, lng: number): { surcharge: number; status: 'standard' | 'high_demand' | 'sold_out' } {
-  if (lat >= 43.0 && lat <= 49.0 && lng >= -124.5 && lng <= -110.0) {
-    if (lat >= 44.0 && lat <= 48.5 && lng >= -122.0 && lng <= -113.5) {
-      return { surcharge: 250, status: 'high_demand' };
-    }
-    return { surcharge: 100, status: 'high_demand' };
-  }
-  if (lat >= 34.0 && lat <= 43.5 && lng >= -112.5 && lng <= -104.5) {
-    if (lat >= 39.0 && lat <= 40.5 && lng >= -107.5 && lng <= -106.0) {
-      return { surcharge: 1000, status: 'high_demand' };
-    }
-    if (lat >= 34.5 && lat <= 36.0 && lng >= -112.0 && lng <= -109.5) {
-      return { surcharge: 500, status: 'high_demand' };
-    }
-    return { surcharge: 250, status: 'high_demand' };
-  }
-  if (lat >= 35.0 && lat <= 39.5 && lng >= -84.5 && lng <= -79.0) {
-    if (lat >= 35.4 && lat <= 36.5 && lng >= -83.8 && lng <= -81.5) {
-      return { surcharge: 500, status: 'high_demand' };
-    }
-    return { surcharge: 250, status: 'high_demand' };
-  }
-  if (lat >= 37.0 && lat <= 41.5 && lng >= -124.0 && lng <= -118.5) {
-    return { surcharge: 500, status: 'high_demand' };
-  }
-  if (lat >= 29.5 && lat <= 31.5 && lng >= -99.5 && lng <= -97.5) {
-    return { surcharge: 500, status: 'high_demand' };
-  }
-  if (lat >= 44.5 && lat <= 47.0 && lng >= -90.5 && lng <= -85.0) {
-    return { surcharge: 250, status: 'high_demand' };
-  }
-  return { surcharge: 0, status: 'standard' };
+function saveWorkerUrl() {
+  localStorage.setItem('starlink_worker_url', workerApiUrl.value);
+  alert('Worker API URL updated to: ' + workerApiUrl.value);
 }
 
-// Live Cloudflare Worker Lookup Proxy with Graceful Offline Model Fallback
+function retryLiveWorkerCheck() {
+  if (liveQueryError.value) {
+    const { lat, lng } = liveQueryError.value;
+    triggerLiveWorkerCheck(lat, lng);
+  }
+}
+
+// Live Cloudflare Worker Lookup Proxy (Strict Live Query Mode)
 async function triggerLiveWorkerCheck(lat: number, lng: number) {
   isCheckingLive.value = true;
-  let result: any = null;
-  let sourceNotice = 'Live Serverless Proxy';
+  liveQueryError.value = null;
+
+  const targetUrl = `${workerApiUrl.value}?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`;
 
   try {
-    const url = `${WORKER_API_URL}?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-    const resp = await fetch(url, { signal: controller.signal });
+    const resp = await fetch(targetUrl, { signal: controller.signal });
     clearTimeout(timeoutId);
 
     if (resp.ok) {
-      result = await resp.json();
+      const result = await resp.json();
+      const updatedRecord: SurchargeRecord = {
+        lat: result.lat,
+        lng: result.lng,
+        surcharge_amount: result.surcharge_amount,
+        status: result.status,
+        sampled_at: result.timestamp || new Date().toISOString(),
+        location_name: `Verified Live: ${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W`,
+        proximity_km: 0
+      };
+
+      inspectedLocation.value = updatedRecord;
+      rawSurchargeData.unshift(updatedRecord);
+      computeStats();
+      renderMarkers();
+      dropRadarPin(lat, lng);
+    } else {
+      let errBody = '';
+      try { errBody = await resp.text(); } catch (e) {}
+      liveQueryError.value = {
+        message: `HTTP ${resp.status} (${resp.statusText}): ${errBody || 'Proxy returned an error'}`,
+        endpoint: targetUrl,
+        lat,
+        lng
+      };
     }
-  } catch (err) {
-    console.warn('Worker endpoint unreachable at ' + WORKER_API_URL + '. Using calibrated regional model.', err);
-  }
+  } catch (err: any) {
+    console.error('Failed to trigger live surcharge checker:', err);
+    let reason = '';
+    if (err.name === 'AbortError') {
+      reason = 'Request timed out after 6 seconds. The Worker API endpoint did not respond.';
+    } else {
+      reason = `Network connection failed (${err.message || 'DNS Resolution Failed'}). The Worker has not been deployed to this URL yet, or is blocked by network/CORS policy.`;
+    }
 
-  // If Cloudflare Worker is not yet deployed, fallback seamlessly to regional model
-  if (!result) {
-    const est = estimateCorridorSurcharge(lat, lng);
-    result = {
-      lat: lat,
-      lng: lng,
-      surcharge_amount: est.surcharge,
-      status: est.status,
-      timestamp: new Date().toISOString()
+    liveQueryError.value = {
+      message: reason,
+      endpoint: targetUrl,
+      lat,
+      lng
     };
-    sourceNotice = 'Calibrated Model (Worker Pending Deploy)';
+  } finally {
+    isCheckingLive.value = false;
   }
-
-  const updatedRecord: SurchargeRecord = {
-    lat: result.lat,
-    lng: result.lng,
-    surcharge_amount: result.surcharge_amount,
-    status: result.status,
-    sampled_at: result.timestamp,
-    location_name: `Verified: ${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W (${sourceNotice})`,
-    proximity_km: 0
-  };
-
-  inspectedLocation.value = updatedRecord;
-
-  // Add fresh record to in-memory list & re-render
-  rawSurchargeData.unshift(updatedRecord);
-  computeStats();
-  renderMarkers();
-  dropRadarPin(lat, lng);
-  isCheckingLive.value = false;
 }
 
 // Geocoding Search via OpenStreetMap Nominatim
