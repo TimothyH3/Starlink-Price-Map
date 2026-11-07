@@ -175,7 +175,7 @@
           <div v-else-if="inspectedLocation" class="inspector-card">
             <div class="card-status-banner" :class="'banner-' + inspectedLocation.status">
               <span class="banner-title font-mono">{{ getStatusTitle(inspectedLocation) }}</span>
-              <span class="banner-surcharge font-mono">${{ inspectedLocation.surcharge_amount }}</span>
+              <span class="banner-surcharge font-mono">{{ (inspectedLocation.isUnsampled || inspectedLocation.surcharge_amount === null) ? 'PENDING' : '$' + inspectedLocation.surcharge_amount }}</span>
             </div>
 
             <div class="card-details font-mono">
@@ -188,12 +188,16 @@
                 <span class="detail-value font-sans">{{ inspectedLocation.location_name || 'US Point' }}</span>
               </div>
               <div class="detail-row">
-                <span class="detail-label">CACHE DISTANCE:</span>
-                <span class="detail-value">{{ inspectedLocation.proximity_km ? `${inspectedLocation.proximity_km.toFixed(1)} km` : 'Exact Pin' }}</span>
+                <span class="detail-label">DATA STATUS:</span>
+                <span class="detail-value">{{ inspectedLocation.isLiveVerified ? 'Verified Live from Starlink' : inspectedLocation.isUnsampled ? 'No verified sample in database' : (inspectedLocation.proximity_km === 0 ? 'Verified Ingested Node' : `Ingested Sample (${inspectedLocation.proximity_km?.toFixed(1)} km away)`) }}</span>
               </div>
               <div class="detail-row">
                 <span class="detail-label">LAST CHECKED:</span>
-                <span class="detail-value">{{ formatDate(inspectedLocation.sampled_at) }}</span>
+                <span class="detail-value">{{ inspectedLocation.isUnsampled ? 'Awaiting check' : formatDate(inspectedLocation.sampled_at) }}</span>
+              </div>
+              <div v-if="inspectedLocation.monthly_service_fee" class="detail-row">
+                <span class="detail-label">MONTHLY SERVICE:</span>
+                <span class="detail-value">${{ inspectedLocation.monthly_service_fee }}/mo</span>
               </div>
             </div>
 
@@ -205,10 +209,14 @@
                 :disabled="isCheckingLive"
               >
                 <span v-if="isCheckingLive" class="spinner"></span>
-                <span>{{ isCheckingLive ? 'QUERYING POSTGIS...' : '⚡ QUERY SPATIAL CELL CACHE' }}</span>
+                <span>{{ isCheckingLive ? 'PROBING STARLINK LIVE...' : '⚡ CHECK LIVE STARLINK SURCHARGE' }}</span>
               </button>
               <p class="live-check-note font-sans">
-                PostGIS spatial engine evaluates proximity to known verified Starlink capacity cells.
+                {{ inspectedLocation.isLiveVerified 
+                  ? 'Directly qualified from Starlink checkout session via Cloudflare Worker proxy.' 
+                  : inspectedLocation.isUnsampled
+                    ? 'Click above to query live Starlink address qualification and checkout pricing.'
+                    : 'Verified sample from Supabase PostGIS.' }}
               </p>
             </div>
           </div>
@@ -268,12 +276,15 @@ interface SurchargeRecord {
   id?: number | string;
   lat: number;
   lng: number;
-  surcharge_amount: number;
-  status: 'standard' | 'high_demand' | 'sold_out';
+  surcharge_amount: number | null;
+  status: 'standard' | 'high_demand' | 'sold_out' | 'unsampled';
   sampled_at: string;
   sample_type?: string;
   location_name?: string;
   proximity_km?: number;
+  isUnsampled?: boolean;
+  isLiveVerified?: boolean;
+  monthly_service_fee?: number;
 }
 
 // Configurable Endpoints
@@ -331,34 +342,8 @@ let markersLayerGroup: any = null;
 let activePinMarker: any = null;
 let rawSurchargeData: SurchargeRecord[] = [];
 
-// Fallback baseline dataset if Supabase is offline
-const BASELINE_SEEDS: SurchargeRecord[] = [
-  { lat: 47.6062, lng: -122.3321, surcharge_amount: 100, status: 'high_demand', location_name: 'Seattle Hinterlands, WA', sampled_at: '2026-11-05T04:00:00Z' },
-  { lat: 44.0582, lng: -121.3153, surcharge_amount: 250, status: 'high_demand', location_name: 'Bend Deschutes, OR', sampled_at: '2026-11-04T04:00:00Z' },
-  { lat: 43.6150, lng: -116.2023, surcharge_amount: 250, status: 'high_demand', location_name: 'Boise Valley, ID', sampled_at: '2026-11-03T04:00:00Z' },
-  { lat: 48.1920, lng: -114.3553, surcharge_amount: 500, status: 'high_demand', location_name: 'Kalispell Flathead, MT', sampled_at: '2026-11-02T04:00:00Z' },
-  { lat: 45.6770, lng: -111.0429, surcharge_amount: 500, status: 'high_demand', location_name: 'Bozeman Gallatin, MT', sampled_at: '2026-11-05T04:00:00Z' },
-  { lat: 40.7608, lng: -111.8910, surcharge_amount: 100, status: 'high_demand', location_name: 'Wasatch Corridor, UT', sampled_at: '2026-11-04T04:00:00Z' },
-  { lat: 37.1041, lng: -113.5684, surcharge_amount: 500, status: 'high_demand', location_name: 'St. George Basin, UT', sampled_at: '2026-11-03T04:00:00Z' },
-  { lat: 39.1911, lng: -106.8370, surcharge_amount: 1000, status: 'high_demand', location_name: 'Aspen Roaring Fork, CO', sampled_at: '2026-11-05T04:00:00Z' },
-  { lat: 43.4799, lng: -110.7624, surcharge_amount: 1000, status: 'high_demand', location_name: 'Jackson Hole, WY', sampled_at: '2026-11-05T04:00:00Z' },
-  { lat: 35.1983, lng: -111.6513, surcharge_amount: 500, status: 'high_demand', location_name: 'Flagstaff Coconino, AZ', sampled_at: '2026-11-04T04:00:00Z' },
-  { lat: 34.8697, lng: -111.8315, surcharge_amount: 500, status: 'high_demand', location_name: 'Sedona Red Rock, AZ', sampled_at: '2026-11-04T04:00:00Z' },
-  { lat: 34.2542, lng: -110.0831, surcharge_amount: 500, status: 'high_demand', location_name: 'Show Low White Mtns, AZ', sampled_at: '2026-11-03T04:00:00Z' },
-  { lat: 35.5951, lng: -82.5515, surcharge_amount: 500, status: 'high_demand', location_name: 'Asheville Blue Ridge, NC', sampled_at: '2026-11-05T04:00:00Z' },
-  { lat: 35.7143, lng: -83.5102, surcharge_amount: 1000, status: 'high_demand', location_name: 'Gatlinburg Smokies, TN', sampled_at: '2026-11-05T04:00:00Z' },
-  { lat: 38.3498, lng: -81.6326, surcharge_amount: 250, status: 'high_demand', location_name: 'Charleston Corridor, WV', sampled_at: '2026-11-04T04:00:00Z' },
-  { lat: 34.5262, lng: -84.0713, surcharge_amount: 500, status: 'high_demand', location_name: 'Dahlonega North GA, GA', sampled_at: '2026-11-05T04:00:00Z' },
-  { lat: 30.4005, lng: -86.1477, surcharge_amount: 500, status: 'high_demand', location_name: 'Destin Hinterland, FL', sampled_at: '2026-11-05T04:00:00Z' },
-  { lat: 30.2752, lng: -98.8719, surcharge_amount: 500, status: 'high_demand', location_name: 'Fredericksburg Hill Country, TX', sampled_at: '2026-11-04T04:00:00Z' },
-  { lat: 44.7631, lng: -85.6206, surcharge_amount: 500, status: 'high_demand', location_name: 'Traverse City, MI', sampled_at: '2026-11-03T04:00:00Z' },
-  { lat: 45.8944, lng: -89.6886, surcharge_amount: 500, status: 'high_demand', location_name: 'Minocqua Northwoods, WI', sampled_at: '2026-11-04T04:00:00Z' },
-  { lat: 39.3280, lng: -120.1278, surcharge_amount: 1000, status: 'high_demand', location_name: 'Truckee High Sierra, CA', sampled_at: '2026-11-05T04:00:00Z' },
-  { lat: 37.6485, lng: -118.9721, surcharge_amount: 1000, status: 'high_demand', location_name: 'Mammoth Lakes, CA', sampled_at: '2026-11-05T04:00:00Z' },
-  { lat: 34.1347, lng: -116.3131, surcharge_amount: 500, status: 'high_demand', location_name: 'Joshua Tree Desert, CA', sampled_at: '2026-11-04T04:00:00Z' },
-  { lat: 28.5383, lng: -81.3792, surcharge_amount: 0, status: 'standard', location_name: 'Orlando Central Metro, FL', sampled_at: '2026-11-01T04:00:00Z' },
-  { lat: 41.3114, lng: -105.5005, surcharge_amount: 0, status: 'standard', location_name: 'Laramie Basin, WY', sampled_at: '2026-11-01T04:00:00Z' }
-];
+// Zero pre-loaded mock nodes. Populates only via genuine database ingestion.
+const BASELINE_SEEDS: SurchargeRecord[] = [];
 
 // Haversine Distance Calculator (km)
 function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -384,9 +369,10 @@ function getTierColor(surcharge: number, status: string): string {
 
 function getStatusTitle(rec: SurchargeRecord): string {
   if (rec.status === 'sold_out') return 'SOLD OUT / WAITLIST';
-  if (rec.surcharge_amount >= 1000) return 'SEVERE CONGESTION SURCHARGE';
-  if (rec.surcharge_amount >= 500) return 'HIGH DEMAND SURCHARGE';
-  if (rec.surcharge_amount >= 100) return 'MODERATE SURCHARGE ZONE';
+  if (rec.surcharge_amount && rec.surcharge_amount >= 1000) return 'SEVERE CONGESTION SURCHARGE';
+  if (rec.surcharge_amount && rec.surcharge_amount >= 500) return 'HIGH DEMAND SURCHARGE';
+  if (rec.surcharge_amount && rec.surcharge_amount >= 100) return 'MODERATE SURCHARGE ZONE';
+  if (rec.isUnsampled || rec.status === 'unsampled' || rec.surcharge_amount === null) return 'UNSAMPLED CELL';
   return 'STANDARD RESIDENTIAL CAPACITY ($0)';
 }
 
@@ -478,14 +464,17 @@ async function fetchSurchargeData() {
         rawSurchargeData = data;
         supabaseOnline.value = true;
       } else {
-        rawSurchargeData = BASELINE_SEEDS;
+        rawSurchargeData = [];
+        supabaseOnline.value = true;
       }
     } else {
-      rawSurchargeData = BASELINE_SEEDS;
+      rawSurchargeData = [];
+      supabaseOnline.value = false;
     }
   } catch (err) {
-    console.warn('Supabase fetch failed. Falling back to local cache.', err);
-    rawSurchargeData = BASELINE_SEEDS;
+    console.warn('Supabase fetch failed. Awaiting data ingestion.', err);
+    rawSurchargeData = [];
+    supabaseOnline.value = false;
   }
 
   computeStats();
@@ -595,9 +584,10 @@ function handleMapClick(lat: number, lng: number) {
     inspectedLocation.value = {
       lat,
       lng,
-      surcharge_amount: 0,
-      status: 'standard',
-      location_name: `Uncached Coordinate (${lat.toFixed(3)}°, ${lng.toFixed(3)}°)`,
+      surcharge_amount: null,
+      status: 'unsampled',
+      isUnsampled: true,
+      location_name: `Unsampled Coordinate (${lat.toFixed(3)}°, ${lng.toFixed(3)}°)`,
       sampled_at: new Date().toISOString(),
       proximity_km: minDistance < 1000 ? minDistance : undefined
     };
@@ -650,14 +640,14 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
 
     const resp = await fetch(targetUrl, { signal: controller.signal });
     clearTimeout(timeoutId);
 
     if (resp.ok) {
       const result = await resp.json();
-      if (result.source === 'postgis_cache') {
+      if (result.source === 'verified_live' || result.source === 'postgis_cache') {
         const updatedRecord: SurchargeRecord = {
           lat: result.lat,
           lng: result.lng,
@@ -665,25 +655,35 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
           status: result.status,
           sampled_at: result.timestamp || new Date().toISOString(),
           location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
-          proximity_km: result.distance_km || 0
+          proximity_km: result.distance_km || 0,
+          isLiveVerified: result.source === 'verified_live',
+          monthly_service_fee: result.monthly_service_fee,
+          isUnsampled: false
         };
         inspectedLocation.value = updatedRecord;
-        rawSurchargeData.unshift(updatedRecord);
+
+        const existingIdx = rawSurchargeData.findIndex(
+          p => Math.abs(p.lat - updatedRecord.lat) < 0.001 && Math.abs(p.lng - updatedRecord.lng) < 0.001
+        );
+        if (existingIdx >= 0) {
+          rawSurchargeData[existingIdx] = updatedRecord;
+        } else {
+          rawSurchargeData.unshift(updatedRecord);
+        }
         computeStats();
         renderMarkers();
       } else {
-        // If already inspecting a known node, keep its existing data
-        if (!inspectedLocation.value || inspectedLocation.value.surcharge_amount === 0) {
-          inspectedLocation.value = {
-            lat: result.lat,
-            lng: result.lng,
-            surcharge_amount: result.surcharge_amount,
-            status: result.status,
-            sampled_at: result.timestamp || new Date().toISOString(),
-            location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
-            proximity_km: 0
-          };
-        }
+        // Unsampled result returned
+        inspectedLocation.value = {
+          lat: result.lat,
+          lng: result.lng,
+          surcharge_amount: result.surcharge_amount,
+          status: result.status || 'unsampled',
+          sampled_at: result.timestamp || new Date().toISOString(),
+          location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
+          isUnsampled: true,
+          proximity_km: 0
+        };
       }
       dropRadarPin(lat, lng);
     } else {
@@ -700,7 +700,7 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
     console.error('Failed to trigger live surcharge checker:', err);
     let reason = '';
     if (err.name === 'AbortError') {
-      reason = 'Request timed out after 6 seconds. The Worker API endpoint did not respond.';
+      reason = 'Request timed out after 12 seconds. The Worker API endpoint did not respond.';
     } else {
       reason = `Network connection failed (${err.message || 'DNS Resolution Failed'}). The Worker has not been deployed to this URL yet, or is blocked by network/CORS policy.`;
     }
@@ -1199,6 +1199,13 @@ onBeforeUnmount(() => {
 .banner-sold_out {
   background: rgba(192, 132, 252, 0.15);
   border-bottom-color: rgba(192, 132, 252, 0.3);
+}
+.banner-unsampled {
+  background: rgba(148, 163, 184, 0.1);
+  border-bottom-color: rgba(148, 163, 184, 0.25);
+}
+.banner-unsampled .banner-surcharge {
+  color: #94a3b8;
 }
 
 .banner-title {

@@ -294,29 +294,22 @@ def generate_radial_scatter_points(center_lat: float, center_lng: float) -> List
 # ---------------------------------------------------------------------------
 # STARLINK QUALIFICATION PROBE ENGINE
 # ---------------------------------------------------------------------------
-def probe_starlink_availability(lat: float, lng: float) -> Dict[str, Any]:
+def probe_starlink_availability(lat: float, lng: float) -> Optional[Dict[str, Any]]:
     """
-    Queries Starlink's qualification endpoint with realistic browser headers,
-    randomized jitter delay, and exponential backoff retry logic.
+    Executes Starlink's exact address qualification and pricing flow:
+    1. Reverse-geocode lat/lng -> place_id & address components
+    2. POST /api/webagg/v1/public/leads -> processorToken
+    3. GET /api/webagg/v1/public/sign-up/lead -> hydrates cart
+    4. GET /api/webagg/v1/public/sign-up/pricing -> exact fee breakdown
+
+    Zero heuristics, zero mock data.
     """
-    headers = {
+    browser_headers = {
         "User-Agent": random.choice(USER_AGENTS),
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9",
         "Referer": "https://www.starlink.com/residential",
-        "Origin": "https://www.starlink.com",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"'
-    }
-
-    params = {
-        "lat": f"{lat:.4f}",
-        "lng": f"{lng:.4f}",
-        "productLine": "residential"
+        "Origin": "https://www.starlink.com"
     }
 
     max_retries = 3
@@ -324,118 +317,109 @@ def probe_starlink_availability(lat: float, lng: float) -> Dict[str, Any]:
 
     for attempt in range(max_retries):
         try:
-            # Random jitter delay (2.0 to 5.0 seconds) to avoid aggressive hammering
-            jitter = random.uniform(2.0, 5.0)
-            logger.debug(f"Jitter pause: {jitter:.2f}s before probing ({lat}, {lng})")
+            # Jitter pause (1.5 to 3.5 seconds) to avoid rate limits
+            jitter = random.uniform(1.5, 3.5)
             time.sleep(jitter)
 
-            for endpoint in STARLINK_QUAL_ENDPOINTS:
-                status_code, data = http_get_json(endpoint, params=params, headers=headers, timeout=12.0)
-                if status_code == 200 and isinstance(data, dict):
-                    # Extract demand surcharge information from payload
-                    surcharge = 0
-                    status = "standard"
+            # 1. Reverse-geocode coordinate
+            rg_url = "https://starlink.com/api/marketing/v1/addresses/reverse-geocode"
+            rg_code, rg_data = http_get_json(rg_url, params={"latitude": f"{lat:.4f}", "longitude": f"{lng:.4f}"}, headers=browser_headers, timeout=12.0)
+            if rg_code != 200 or not isinstance(rg_data, dict):
+                logger.warning(f"Reverse geocode returned HTTP {rg_code} on attempt {attempt+1}")
+                continue
 
-                    # Parse various Starlink schema formats
-                    if "demandSurcharge" in data:
-                        surcharge = int(data.get("demandSurcharge", 0))
-                    elif "surchargeAmount" in data:
-                        surcharge = int(data.get("surchargeAmount", 0))
-                    elif "congestionFee" in data:
-                        surcharge = int(data.get("congestionFee", 0))
-                    elif "serviceLines" in data:
-                        lines = data.get("serviceLines", [])
-                        for line in lines:
-                            if line.get("demandSurcharge"):
-                                surcharge = int(line.get("demandSurcharge"))
-                                break
+            content = rg_data.get("content", [])
+            if not content:
+                logger.warning(f"No reverse geocode results for ({lat}, {lng})")
+                return None
 
-                    if surcharge > 0:
-                        status = "high_demand"
-                    elif data.get("isSoldOut") or data.get("capacityStatus") == "sold_out":
-                        status = "sold_out"
+            first_match = content[0]
+            comps: Dict[str, Tuple[str, str]] = {}
+            for c in first_match.get("address_components", []):
+                types = c.get("types", [])
+                if types:
+                    comps[types[0]] = (c.get("short_name", ""), c.get("long_name", ""))
 
-                    return {
-                        "surcharge_amount": surcharge,
-                        "status": status,
-                        "verified_live": True,
-                        "raw": data
-                    }
-                elif status_code in (429, 503):
-                    logger.warning(f"Rate limited or service unavailable ({status_code}) on attempt {attempt+1}")
-                    time.sleep(backoff)
-                    backoff *= 2.0
-                    break
+            country = comps.get("country", ("US", "United States"))[0]
+            state_short = comps.get("administrative_area_level_1", ("", ""))[0]
+            state_long = comps.get("administrative_area_level_1", ("", ""))[1]
+            city = comps.get("locality", ("", ""))[1]
+            zip_code = comps.get("postal_code", ("", ""))[0]
+
+            # 2. Create Lead Session
+            lead_payload = {
+                "source": 0,
+                "sourceV2": "1",
+                "leadAttributes": {
+                    "page": "/residential",
+                    "activation": "false"
+                },
+                "countryCode": country or "US",
+                "locale": "en-US",
+                "latitude": lat,
+                "longitude": lng,
+                "formattedAddress": first_match.get("formatted_address"),
+                "placeId": first_match.get("place_id"),
+                "zipCode": zip_code,
+                "region": state_short,
+                "administrativeArea": state_long,
+                "locality": city
+            }
+
+            lead_url = "https://starlink.com/api/webagg/v1/public/leads"
+            lead_code, lead_text = http_post_json(lead_url, payload=lead_payload, headers={**browser_headers, "Content-Type": "application/json"}, timeout=15.0)
+            if lead_code != 200:
+                logger.warning(f"Lead creation returned HTTP {lead_code}: {lead_text[:200]}")
+                continue
+
+            lead_json = json.loads(lead_text)
+            token = lead_json.get("content", {}).get("processorToken")
+            if not token:
+                logger.warning("No processorToken in lead response")
+                continue
+
+            # 3. Hydrate cart session via /sign-up/lead
+            hydrate_url = "https://starlink.com/api/webagg/v1/public/sign-up/lead"
+            hyd_code, _ = http_get_json(hydrate_url, params={"processorToken": token}, headers={**browser_headers, "Referer": f"https://starlink.com/order?processorToken={token}"}, timeout=15.0)
+            if hyd_code != 200:
+                logger.warning(f"Lead hydration returned HTTP {hyd_code}")
+                continue
+
+            # 4. Retrieve exact pricing breakdown
+            price_url = "https://starlink.com/api/webagg/v1/public/sign-up/pricing"
+            price_code, price_data = http_get_json(price_url, params={"processorToken": token}, headers={**browser_headers, "Referer": f"https://starlink.com/order?processorToken={token}"}, timeout=15.0)
+            if price_code != 200 or not isinstance(price_data, dict):
+                logger.warning(f"Pricing returned HTTP {price_code}")
+                continue
+
+            pricing_content = price_data.get("content", {})
+            surcharge_prods = pricing_content.get("demandSurchargeProducts", [])
+            surcharge = 0
+            if surcharge_prods:
+                surcharge = int(surcharge_prods[0].get("price", 0))
+
+            deposit = int(pricing_content.get("depositAmount", 0))
+            monthly_service = int(pricing_content.get("serviceAmount", 120))
+            status = "sold_out" if deposit > 0 else ("high_demand" if surcharge > 0 else "standard")
+
+            logger.info(f"Verified Live: ({lat}, {lng}) -> Surcharge: ${surcharge}, Status: {status}, Service: ${monthly_service}/mo")
+
+            return {
+                "surcharge_amount": surcharge,
+                "status": status,
+                "verified_live": True,
+                "location_name": first_match.get("formatted_address") or f"{city}, {state_short}",
+                "monthly_service_fee": monthly_service,
+                "deposit_amount": deposit
+            }
 
         except Exception as e:
-            logger.warning(f"Probe attempt {attempt+1} encountered error: {e}")
+            logger.warning(f"Probe attempt {attempt+1} encountered error for ({lat}, {lng}): {e}")
             time.sleep(backoff)
             backoff *= 1.5
 
-    # Fallback heuristic model if public automated endpoint is firewalled or CAPTCHA-gated:
-    # Based on historic cell congestion mapping in known corridors
-    logger.info(f"Using calibrated corridor baseline for ({lat:.3f}, {lng:.3f})")
-    return calibrate_corridor_baseline(lat, lng)
-    logger.info(f"Using calibrated corridor baseline for ({lat:.3f}, {lng:.3f})")
-    return calibrate_corridor_baseline(lat, lng)
-
-
-def calibrate_corridor_baseline(lat: float, lng: float) -> Dict[str, Any]:
-    """
-    Calibrated heuristic based on verified Starlink congestion data across US corridors.
-    Ensures high data fidelity and zero pipeline halts even under anti-bot blocks.
-    """
-    # High-demand regions: Pacific NW, Appalachia, Intermountain West, Sierra Nevada, Hill Country
-    surcharge = 0
-    status = "standard"
-
-    # Pacific Northwest / Northern Rockies
-    if (43.0 <= lat <= 49.0 and -124.0 <= lng <= -110.0):
-        # Hotspots in Bend, Kalispell, Bozeman, Coeur d'Alene
-        if (44.0 <= lat <= 48.5 and -122.0 <= lng <= -113.0):
-            surcharge = random.choice([250, 500])
-        else:
-            surcharge = 100
-        status = "high_demand"
-
-    # Intermountain West / Colorado Rockies / White Mtns AZ
-    elif (34.0 <= lat <= 43.5 and -112.5 <= lng <= -104.5):
-        if (39.0 <= lat <= 40.5 and -107.5 <= lng <= -106.0):  # Aspen / Vail corridor
-            surcharge = 1000
-        elif (34.5 <= lat <= 36.0 and -112.0 <= lng <= -109.5):  # Sedona / Show Low / Flagstaff
-            surcharge = 500
-        else:
-            surcharge = random.choice([250, 500])
-        status = "high_demand"
-
-    # Appalachia / Great Smoky Mtns / Cumberland
-    elif (35.0 <= lat <= 39.5 and -84.5 <= lng <= -79.0):
-        if (35.4 <= lat <= 36.5 and -83.8 <= lng <= -81.5):  # Gatlinburg / Boone / Asheville
-            surcharge = random.choice([500, 1000])
-        else:
-            surcharge = 250
-        status = "high_demand"
-
-    # Sierra Nevada & North Coast California
-    elif (37.0 <= lat <= 41.5 and -124.0 <= lng <= -118.5):
-        surcharge = random.choice([500, 1000])
-        status = "high_demand"
-
-    # Texas Hill Country & Central Bottlenecks
-    elif (29.5 <= lat <= 31.5 and -99.5 <= lng <= -97.5):
-        surcharge = 500
-        status = "high_demand"
-
-    # Northwoods & Upper Peninsula
-    elif (44.5 <= lat <= 47.0 and -90.5 <= lng <= -85.0):
-        surcharge = random.choice([250, 500])
-        status = "high_demand"
-
-    return {
-        "surcharge_amount": surcharge,
-        "status": status,
-        "verified_live": False
-    }
+    logger.warning(f"Unable to qualify ({lat:.4f}, {lng:.4f}) after {max_retries} retries. Zero heuristic fallback.")
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +507,10 @@ def main():
 
         logger.info(f"[{idx}/{len(MACRO_SEEDS)}] Probing Macro Anchor: {name} ({lat}, {lng})")
         probe_res = probe_starlink_availability(lat, lng)
+        if not probe_res:
+            logger.warning(f"  -> Skipping anchor {name} due to probe failure.")
+            continue
+
         surcharge = probe_res["surcharge_amount"]
         status = probe_res["status"]
 
@@ -532,7 +520,7 @@ def main():
             "surcharge_amount": surcharge,
             "status": status,
             "sample_type": "scheduled_seed",
-            "location_name": name
+            "location_name": probe_res.get("location_name") or name
         }
         records_to_upsert.append(seed_record)
 
@@ -548,13 +536,16 @@ def main():
                 s_lng = scatter["lng"]
 
                 s_probe = probe_starlink_availability(s_lat, s_lng)
+                if not s_probe:
+                    continue
+
                 scatter_record = {
                     "lat": s_lat,
                     "lng": s_lng,
                     "surcharge_amount": s_probe["surcharge_amount"],
                     "status": s_probe["status"],
                     "sample_type": "radial_scatter",
-                    "location_name": s_name
+                    "location_name": s_probe.get("location_name") or s_name
                 }
                 records_to_upsert.append(scatter_record)
                 radial_scatter_count += 1
