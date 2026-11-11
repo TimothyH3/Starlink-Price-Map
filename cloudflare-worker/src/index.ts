@@ -1,10 +1,12 @@
 /**
- * Cloudflare Worker: Starlink High-Demand Surcharge Spatial API Proxy
+ * Cloudflare Worker: Starlink Regional Service Cost & Surcharge Spatial API Proxy
  * Route: GET /check-fee?lat={lat}&lng={lng} or /api/check-fee?lat={lat}&lng={lng}
  *
  * 1. Checks Supabase PostGIS spatial cache for verified samples within 25 km.
  * 2. If not cached, performs live qualification via Starlink's address & pricing pipeline.
- * 3. Never returns fake heuristics or arbitrary estimates.
+ * 3. Returns exact monthly service subscription fee ($55 discount, $120 standard, $130+ congested)
+ *    and any upfront demand surcharges ($0 or $100-$1,500).
+ * 4. Never returns fake heuristics or arbitrary estimates.
  */
 
 export interface Env {
@@ -13,17 +15,19 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
 }
 
-interface SurchargeResult {
+export interface ServiceCostResult {
   lat: number;
   lng: number;
+  monthly_service_fee: number | null;
+  service_price_adjustment: number;
   surcharge_amount: number | null;
-  status: 'standard' | 'high_demand' | 'sold_out' | 'unsampled';
+  status: 'discounted' | 'standard' | 'congested' | 'high_demand' | 'sold_out' | 'unsampled';
+  tier_label: string;
   location_name?: string;
   timestamp: string;
   source: 'verified_live' | 'postgis_cache' | 'standard_capacity' | 'unsampled';
   distance_km?: number;
   message?: string;
-  monthly_service_fee?: number;
   starlink_verify_url: string;
 }
 
@@ -59,7 +63,7 @@ export default {
       return new Response(
         JSON.stringify({
           status: 'ok',
-          service: 'starlink-surcharge-spatial-proxy',
+          service: 'starlink-service-cost-spatial-proxy',
           time: new Date().toISOString()
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -97,7 +101,7 @@ export default {
     const starlinkVerifyUrl = `https://www.starlink.com/residential?serviceAddress=${lat.toFixed(4)},${lng.toFixed(4)}`;
 
     // Tier 1: Query Supabase PostGIS spatial cache (radius 25 km)
-    let result: SurchargeResult | null = null;
+    let result: ServiceCostResult | null = null;
     if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
       result = await queryPostGISProximity(env, lat, lng, starlinkVerifyUrl);
     }
@@ -108,11 +112,14 @@ export default {
     }
 
     // Tier 3: If live qualification unreachable, return honest unsampled status
-    const finalResult: SurchargeResult = result || {
+    const finalResult: ServiceCostResult = result || {
       lat,
       lng,
+      monthly_service_fee: null,
+      service_price_adjustment: 0,
       surcharge_amount: null,
       status: 'unsampled',
+      tier_label: 'Unsampled Cell',
       location_name: `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
       timestamp: new Date().toISOString(),
       source: 'unsampled',
@@ -145,7 +152,7 @@ async function probeStarlinkLive(
   lat: number,
   lng: number,
   starlinkVerifyUrl: string
-): Promise<SurchargeResult | null> {
+): Promise<ServiceCostResult | null> {
   const browserHeaders = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     'Origin': 'https://starlink.com',
@@ -243,20 +250,50 @@ async function probeStarlinkLive(
 
     const deposit = content.depositAmount || 0;
     const monthlyFee = content.serviceAmount || 120;
-    const status = deposit > 0 ? 'sold_out' : surcharge > 0 ? 'high_demand' : 'standard';
+    const priceAdjustment = monthlyFee - 120;
+
+    let status: 'discounted' | 'standard' | 'congested' | 'high_demand' | 'sold_out' = 'standard';
+    let tierLabel = '$120/mo Standard Plan';
+
+    if (deposit > 0) {
+      status = 'sold_out';
+      tierLabel = 'Sold Out / Waitlist';
+    } else if (surcharge > 0) {
+      status = 'high_demand';
+      tierLabel = `+$${surcharge} Demand Surcharge`;
+    } else if (monthlyFee > 120) {
+      status = 'congested';
+      tierLabel = `$${monthlyFee}/mo Congestion Rate`;
+    } else if (monthlyFee < 120) {
+      status = 'discounted';
+      tierLabel = `$${monthlyFee}/mo Regional Discount`;
+    }
+
+    let summaryMsg = '';
+    if (deposit > 0) {
+      summaryMsg = `Verified live from Starlink checkout: Cell capacity currently sold out (Waitlist deposit required).`;
+    } else if (surcharge > 0) {
+      summaryMsg = `Verified live from Starlink checkout: $${monthlyFee}/mo subscription with $${surcharge} one-time congestion surcharge.`;
+    } else if (monthlyFee > 120) {
+      summaryMsg = `Verified live from Starlink checkout: $${monthlyFee}/mo (regional congestion adjustment of +$${priceAdjustment}/mo).`;
+    } else if (monthlyFee < 120) {
+      summaryMsg = `Verified live from Starlink checkout: $${monthlyFee}/mo (regional excess capacity discount).`;
+    } else {
+      summaryMsg = `Verified live from Starlink checkout: $120/mo standard residential plan.`;
+    }
 
     return {
       lat,
       lng,
+      monthly_service_fee: monthlyFee,
+      service_price_adjustment: priceAdjustment,
       surcharge_amount: surcharge,
       status,
+      tier_label: tierLabel,
       location_name: firstMatch.formatted_address || `${city}, ${stateShort}`,
       timestamp: new Date().toISOString(),
       source: 'verified_live',
-      monthly_service_fee: monthlyFee,
-      message: surcharge > 0
-        ? `Verified live from Starlink checkout: $${surcharge} one-time congestion surcharge.`
-        : `Verified live from Starlink checkout: standard residential capacity ($0 surcharge).`,
+      message: summaryMsg,
       starlink_verify_url: starlinkVerifyUrl
     };
   } catch (err) {
@@ -273,7 +310,7 @@ async function queryPostGISProximity(
   lat: number,
   lng: number,
   starlinkVerifyUrl: string
-): Promise<SurchargeResult | null> {
+): Promise<ServiceCostResult | null> {
   const rpcUrl = `${env.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/rpc/get_nearby_surcharge`;
   const apiKey = env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -299,11 +336,31 @@ async function queryPostGISProximity(
       const rows = await resp.json() as any[];
       if (Array.isArray(rows) && rows.length > 0) {
         const nearest = rows[0];
+        const surcharge = nearest.surcharge_amount || 0;
+        const monthlyFee = nearest.monthly_service_fee || (nearest.status === 'discounted' ? 55 : nearest.status === 'congested' ? 130 : 120);
+        const priceAdjustment = monthlyFee - 120;
+
+        let status = nearest.status;
+        if (!status || status === 'standard') {
+          if (surcharge > 0) status = 'high_demand';
+          else if (monthlyFee > 120) status = 'congested';
+          else if (monthlyFee < 120) status = 'discounted';
+          else status = 'standard';
+        }
+
+        let tierLabel = `$${monthlyFee}/mo`;
+        if (surcharge > 0) tierLabel = `+$${surcharge} Demand Surcharge`;
+        else if (status === 'discounted') tierLabel = `$${monthlyFee}/mo Regional Discount`;
+        else if (status === 'congested') tierLabel = `$${monthlyFee}/mo Congestion Rate`;
+
         return {
           lat: nearest.lat,
           lng: nearest.lng,
-          surcharge_amount: nearest.surcharge_amount,
-          status: nearest.status,
+          monthly_service_fee: monthlyFee,
+          service_price_adjustment: priceAdjustment,
+          surcharge_amount: surcharge,
+          status,
+          tier_label: tierLabel,
           location_name: nearest.location_name || `PostGIS Node (${nearest.lat.toFixed(3)}°, ${nearest.lng.toFixed(3)}°)`,
           timestamp: nearest.sampled_at,
           source: 'postgis_cache',

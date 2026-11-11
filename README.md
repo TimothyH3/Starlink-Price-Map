@@ -1,8 +1,8 @@
-# Starlink High-Demand Congestion Surcharge Map
+# Starlink Service Cost Map
 
-An interactive, real-time geospatial application tracking **Starlink High-Demand Congestion Surcharges ($100–$1,500)** across the United States. 
+An interactive, real-time geospatial application tracking **Starlink Regional Monthly Service Costs ($55–$130+/mo)**, Service Price Adjustments, and **Congestion Surcharges ($100–$1,500)** across the United States.
 
-Integrated as a dedicated subpage on **[tjhansen.net/starlink-surcharge-map](https://tjhansen.net/starlink-surcharge-map)**, engineered for GitHub Pages SPA client-side routing, PostGIS spatial indexing, scheduled sparse sampling, and on-demand live address qualification.
+Integrated as a dedicated subpage on **[tjhansen.net/starlink-surcharge-map](https://tjhansen.net/starlink-surcharge-map)**, engineered for GitHub Pages SPA client-side routing, PostGIS spatial indexing, adaptive sparse honeycomb sampling, and authentic on-demand checkout qualification.
 
 ---
 
@@ -13,16 +13,16 @@ The system operates on a 100% free-tier serverless architecture:
 ```
                   +----------------------------------------------+
                   |  Scheduled GitHub Action (.github/workflows) |
-                  |  Runs weekly cron (Sunday 04:00 UTC)         |
-                  |  Probes ~60 macro anchors + 10-point scatter |
+                  |  Runs hourly micro-batches (8 points / run)  |
+                  |  Shifts hexagonal grid weekly (+15 km)       |
                   +----------------------+-----------------------+
                                          |
                                          v
 +------------------------+      +------------------+      +------------------------+
 | Frontend Map UI        | ---> |  Supabase DB     | <--- | Cloudflare Worker      |
-| (MapLibre / Leaflet)   |      |  PostgreSQL 15+  |      | Live Lookup API Proxy  |
-| CartoDB Dark Matter    |      |  PostGIS GIST    |      | /api/check-fee?lat=&lng|
-| Proximity Cache (25km) |      |  Public RLS Read |      | ctx.waitUntil upsert   |
+| (Vue 3 / Leaflet)      |      |  PostgreSQL 15+  |      | Live Lookup API Proxy  |
+| Esri Dark Gray Canvas  |      |  PostGIS GIST    |      | /api/check-fee?lat=&lng|
+| Proximity Cache (25km) |      |  Public RLS Read |      | 4-Step Starlink Auth   |
 +------------------------+      +------------------+      +------------------------+
             ^                                                         ^
             |                                                         |
@@ -32,32 +32,28 @@ The system operates on a 100% free-tier serverless architecture:
 1. **Frontend Map UI (`/starlink-surcharge-map`):**
    - High-contrast, cybernetic dark theme matching `tjhansen.net` (`#07090E`, JetBrains Mono, Inter).
    - Esri World Dark Gray Canvas basemap + Reference labels (100% free, zero API key dependency, zero watermarks).
-   - Tiered color visualization:
-     - **$0 Standard**: Soft Cyan (`#22d3ee`)
-     - **$100–$250 Surcharge**: Yellow (`#facc15`)
-     - **$500–$750 Surcharge**: Orange (`#fb923c`)
-     - **$1,000+ Surcharge**: Crimson Red (`#ef4444`)
+   - Tiered color visualization focusing on **Monthly Service Cost**:
+     - **$55/mo Regional Discount**: Emerald Green (`#10b981`)
+     - **$120/mo Standard Plan**: Sky Cyan (`#38bdf8`)
+     - **$130+/mo Congestion Rate**: Vibrant Orange (`#f97316`)
+     - **+$100+ Demand Surcharge**: Crimson Red (`#ef4444`)
      - **Sold Out / Waitlist**: Purple (`#c084fc`)
+   - Prominent badge and cost breakdown noting upfront congestion surcharges and monthly price adjustments.
    - Nominatim / OpenStreetMap geocoder address search with debouncing.
-   - 25 km / 14-day local spatial cache inspection.
-   - On-demand *"⚡ Check Exact Live Surcharge"* trigger invoking Cloudflare Worker proxy.
+   - 25 km local spatial cache inspection.
+   - On-demand *"⚡ Check Live Starlink Service Cost"* trigger invoking Cloudflare Worker proxy.
    - Macro corridor quick-jumps (Pacific NW, Intermountain West, Appalachia, Southeast, Texas).
 
 2. **Database & API (Supabase PostgreSQL + PostGIS):**
    - Stores sampled coordinates as PostGIS `GEOMETRY(Point, 4326)` indexed via GIST.
-   - Table `starlink_surcharges` with Row Level Security (RLS):
-     - `anon` has public `SELECT` read privileges.
-     - `service_role` has full write/update privileges.
-   - Stored procedures:
-     - `upsert_starlink_surcharge`: Deduplicates and upserts points.
-     - `get_nearby_surcharge`: Proximity search with `ST_DWithin` and age filtering.
-     - `get_surcharges_geojson`: Serializes full FeatureCollection GeoJSON.
+   - Table `starlink_surcharges` with `monthly_service_fee`, `surcharge_amount`, `status`, and coordinates.
+   - Row Level Security (RLS) enabled.
 
 3. **Background Worker (GitHub Actions + Python):**
-   - Automated workflow: `.github/workflows/sample.yml` (cron `0 4 * * 0` + `workflow_dispatch`).
-   - Python script: `scripts/sample_demand.py` targeting ~60 macro seed anchors across US broadband bottleneck corridors.
-   - Jittered requests (2–5s delays), realistic browser headers, and exponential backoff.
-   - Localized 10-point radial scatter upon detecting `surcharge > 0`:
+   - Automated workflow: `.github/workflows/sample.yml` (hourly micro-batches).
+   - Python script: `scripts/sample_demand.py` traversing a rotating hexagonal lattice across CONUS.
+   - Dynamic promotion to priority queue on detecting `surcharge > 0` or `monthly_service_fee > 120`.
+   - Localized 4-point radial perimeter scatter (~25 km N, S, E, W).
      - 4 cardinal points (N, E, S, W) at 25 km.
      - 6 circular points at 70 km.
    - Batches and upserts records to Supabase PostGIS.

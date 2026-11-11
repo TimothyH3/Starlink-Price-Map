@@ -1,5 +1,5 @@
 -- ============================================================================
--- STARLINK HIGH-DEMAND CONGESTION SURCHARGE TRACKER
+-- STARLINK REGIONAL SERVICE COST & CONGESTION SURCHARGE TRACKER
 -- Supabase PostgreSQL + PostGIS Schema & Spatial Migrations
 -- Target Database: Supabase PostgreSQL 15+ with PostGIS
 -- ============================================================================
@@ -16,13 +16,17 @@ CREATE TABLE IF NOT EXISTS starlink_surcharges (
     coordinates GEOMETRY(Point, 4326) NOT NULL,
     lat DOUBLE PRECISION NOT NULL,
     lng DOUBLE PRECISION NOT NULL,
+    monthly_service_fee INTEGER NOT NULL DEFAULT 120 CHECK (monthly_service_fee >= 0),
     surcharge_amount INTEGER NOT NULL DEFAULT 0 CHECK (surcharge_amount >= 0),
-    status TEXT NOT NULL CHECK (status IN ('standard', 'high_demand', 'sold_out')),
+    status TEXT NOT NULL CHECK (status IN ('standard', 'discounted', 'congested', 'high_demand', 'sold_out')),
     sampled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    sample_type TEXT NOT NULL CHECK (sample_type IN ('scheduled_seed', 'radial_scatter', 'user_lookup')),
+    sample_type TEXT NOT NULL,
     location_name TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Migration for existing tables:
+ALTER TABLE starlink_surcharges ADD COLUMN IF NOT EXISTS monthly_service_fee INTEGER NOT NULL DEFAULT 120;
 
 -- 4. Spatial and Performance Indexes
 -- GIST index for fast radius/spatial proximity queries (e.g. ST_DWithin)

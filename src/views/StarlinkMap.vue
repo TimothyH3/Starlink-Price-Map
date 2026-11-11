@@ -16,7 +16,7 @@
         </a>
         <span class="hud-divider">/</span>
         <div class="hud-title-group">
-          <h1 class="hud-title">Starlink High-Demand Surcharge Map</h1>
+          <h1 class="hud-title">Starlink Service Cost Map</h1>
           <span class="hud-badge font-mono">LIVE TELEMETRY</span>
         </div>
       </div>
@@ -33,7 +33,7 @@
             v-model="searchQuery"
             @input="onSearchInput"
             @keydown.enter="executeSearch"
-            placeholder="Search US address, city, or zip (e.g. Bend, OR)..."
+            placeholder="Search US address, city, or zip (e.g. Denver, CO)..."
             class="search-input font-sans"
           />
           <button v-if="searchQuery" @click="clearSearch" class="search-clear-btn" aria-label="Clear search">✕</button>
@@ -76,39 +76,39 @@
       <!-- Floating Map Legend & Tier Filters -->
       <div class="floating-legend font-mono">
         <div class="legend-header">
-          <span class="legend-title">CONGESTION TIERS</span>
+          <span class="legend-title">MONTHLY SERVICE TIERS</span>
           <span class="legend-count">{{ filteredCount }} NODES</span>
         </div>
         <div class="legend-items">
-          <label class="legend-item tier-cyan" :class="{ disabled: !tierFilters.tier0 }">
-            <input type="checkbox" v-model="tierFilters.tier0" @change="applyTierFilters" />
+          <label class="legend-item tier-green" :class="{ disabled: !tierFilters.tierDiscount }">
+            <input type="checkbox" v-model="tierFilters.tierDiscount" @change="applyTierFilters" />
+            <span class="legend-swatch swatch-green"></span>
+            <span class="legend-label">$55/mo Regional Discount</span>
+            <span class="tier-count">({{ tierCounts.tierDiscount }})</span>
+          </label>
+          <label class="legend-item tier-cyan" :class="{ disabled: !tierFilters.tierStandard }">
+            <input type="checkbox" v-model="tierFilters.tierStandard" @change="applyTierFilters" />
             <span class="legend-swatch swatch-cyan"></span>
-            <span class="legend-label">$0 Standard</span>
-            <span class="tier-count">({{ tierCounts.tier0 }})</span>
+            <span class="legend-label">$120/mo Standard Plan</span>
+            <span class="tier-count">({{ tierCounts.tierStandard }})</span>
           </label>
-          <label class="legend-item tier-yellow" :class="{ disabled: !tierFilters.tier1 }">
-            <input type="checkbox" v-model="tierFilters.tier1" @change="applyTierFilters" />
-            <span class="legend-swatch swatch-yellow"></span>
-            <span class="legend-label">$100–$250 Surcharge</span>
-            <span class="tier-count">({{ tierCounts.tier1 }})</span>
-          </label>
-          <label class="legend-item tier-orange" :class="{ disabled: !tierFilters.tier2 }">
-            <input type="checkbox" v-model="tierFilters.tier2" @change="applyTierFilters" />
+          <label class="legend-item tier-orange" :class="{ disabled: !tierFilters.tierCongested }">
+            <input type="checkbox" v-model="tierFilters.tierCongested" @change="applyTierFilters" />
             <span class="legend-swatch swatch-orange"></span>
-            <span class="legend-label">$500–$750 Surcharge</span>
-            <span class="tier-count">({{ tierCounts.tier2 }})</span>
+            <span class="legend-label">$130+/mo Congestion Rate</span>
+            <span class="tier-count">({{ tierCounts.tierCongested }})</span>
           </label>
-          <label class="legend-item tier-red" :class="{ disabled: !tierFilters.tier3 }">
-            <input type="checkbox" v-model="tierFilters.tier3" @change="applyTierFilters" />
+          <label class="legend-item tier-red" :class="{ disabled: !tierFilters.tierSurcharge }">
+            <input type="checkbox" v-model="tierFilters.tierSurcharge" @change="applyTierFilters" />
             <span class="legend-swatch swatch-red"></span>
-            <span class="legend-label">$1,000+ Severe</span>
-            <span class="tier-count">({{ tierCounts.tier3 }})</span>
+            <span class="legend-label">+$100+ Demand Surcharge</span>
+            <span class="tier-count">({{ tierCounts.tierSurcharge }})</span>
           </label>
-          <label class="legend-item tier-purple" :class="{ disabled: !tierFilters.soldOut }">
-            <input type="checkbox" v-model="tierFilters.soldOut" @change="applyTierFilters" />
+          <label class="legend-item tier-purple" :class="{ disabled: !tierFilters.tierSoldOut }">
+            <input type="checkbox" v-model="tierFilters.tierSoldOut" @change="applyTierFilters" />
             <span class="legend-swatch swatch-purple"></span>
             <span class="legend-label">Sold Out / Waitlist</span>
-            <span class="tier-count">({{ tierCounts.soldOut }})</span>
+            <span class="tier-count">({{ tierCounts.tierSoldOut }})</span>
           </label>
         </div>
       </div>
@@ -173,12 +173,34 @@
 
           <!-- Active Inspected Pin Card -->
           <div v-else-if="inspectedLocation" class="inspector-card">
-            <div class="card-status-banner" :class="'banner-' + inspectedLocation.status">
+            <div class="card-status-banner" :class="getBannerClass(inspectedLocation)">
               <span class="banner-title font-mono">{{ getStatusTitle(inspectedLocation) }}</span>
-              <span class="banner-surcharge font-mono">{{ (inspectedLocation.isUnsampled || inspectedLocation.surcharge_amount === null) ? 'PENDING' : '$' + inspectedLocation.surcharge_amount }}</span>
+              <span class="banner-surcharge font-mono">{{ isPending(inspectedLocation) ? 'PENDING' : '$' + getPointFee(inspectedLocation) + '/mo' }}</span>
+            </div>
+
+            <!-- Surcharge Callout Banner -->
+            <div v-if="(inspectedLocation.surcharge_amount || 0) > 0" class="surcharge-alert-banner font-mono">
+              <span>⚠️</span>
+              <span>+${{ inspectedLocation.surcharge_amount }} ONE-TIME CONGESTION SURCHARGE</span>
+            </div>
+            <div v-else-if="!isPending(inspectedLocation) && inspectedLocation.status !== 'sold_out'" class="surcharge-none-banner font-mono">
+              <span>✓</span>
+              <span>No upfront demand surcharge ($0)</span>
             </div>
 
             <div class="card-details font-mono">
+              <div class="detail-row">
+                <span class="detail-label">MONTHLY SERVICE:</span>
+                <span class="detail-value">{{ isPending(inspectedLocation) ? 'Awaiting check' : '$' + getPointFee(inspectedLocation) + '/mo' }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">RATE BREAKDOWN:</span>
+                <span class="detail-value font-sans" style="font-size:0.72rem;">{{ isPending(inspectedLocation) ? 'Unknown' : getRateBreakdownText(inspectedLocation) }}</span>
+              </div>
+              <div class="detail-row">
+                <span class="detail-label">UPFRONT SURCHARGE:</span>
+                <span class="detail-value" :style="{ color: (inspectedLocation.surcharge_amount || 0) > 0 ? '#ef4444' : '#34d399' }">{{ isPending(inspectedLocation) ? 'Pending' : ((inspectedLocation.surcharge_amount || 0) > 0 ? '+$' + inspectedLocation.surcharge_amount : '$0') }}</span>
+              </div>
               <div class="detail-row">
                 <span class="detail-label">COORDINATES:</span>
                 <span class="detail-value">{{ inspectedLocation.lat.toFixed(4) }}°N, {{ inspectedLocation.lng.toFixed(4) }}°W</span>
@@ -189,15 +211,11 @@
               </div>
               <div class="detail-row">
                 <span class="detail-label">DATA STATUS:</span>
-                <span class="detail-value">{{ inspectedLocation.isLiveVerified ? 'Verified Live from Starlink' : inspectedLocation.isUnsampled ? 'No verified sample in database' : (inspectedLocation.proximity_km === 0 ? 'Verified Ingested Node' : `Ingested Sample (${inspectedLocation.proximity_km?.toFixed(1)} km away)`) }}</span>
+                <span class="detail-value">{{ inspectedLocation.isLiveVerified ? 'Verified Live from Starlink Checkout' : inspectedLocation.isUnsampled ? 'No verified sample in database' : (inspectedLocation.proximity_km === 0 ? 'Verified Ingested Node' : `Ingested Sample (${inspectedLocation.proximity_km?.toFixed(1)} km away)`) }}</span>
               </div>
               <div class="detail-row">
                 <span class="detail-label">LAST CHECKED:</span>
-                <span class="detail-value">{{ inspectedLocation.isUnsampled ? 'Awaiting check' : formatDate(inspectedLocation.sampled_at) }}</span>
-              </div>
-              <div v-if="inspectedLocation.monthly_service_fee" class="detail-row">
-                <span class="detail-label">MONTHLY SERVICE:</span>
-                <span class="detail-value">${{ inspectedLocation.monthly_service_fee }}/mo</span>
+                <span class="detail-value">{{ isPending(inspectedLocation) ? 'Awaiting check' : formatDate(inspectedLocation.sampled_at) }}</span>
               </div>
             </div>
 
@@ -209,7 +227,7 @@
                 :disabled="isCheckingLive"
               >
                 <span v-if="isCheckingLive" class="spinner"></span>
-                <span>{{ isCheckingLive ? 'PROBING STARLINK LIVE...' : '⚡ CHECK LIVE STARLINK SURCHARGE' }}</span>
+                <span>{{ isCheckingLive ? 'PROBING STARLINK CHECKOUT...' : '⚡ CHECK LIVE STARLINK SERVICE COST' }}</span>
               </button>
               <p class="live-check-note font-sans">
                 {{ inspectedLocation.isLiveVerified 
@@ -224,29 +242,29 @@
           <!-- Empty State -->
           <div v-else class="empty-inspector font-sans">
             <div class="empty-icon">📍</div>
-            <p class="empty-text">Click anywhere on the map or search an address to inspect local Starlink congestion surcharges.</p>
+            <p class="empty-text">Click anywhere on the map or search an address to inspect local Starlink monthly service rates and congestion fees.</p>
           </div>
         </div>
 
-        <!-- US Network Congestion Analytics -->
+        <!-- US Network Pricing Analytics -->
         <div class="sidebar-section">
-          <h2 class="sidebar-heading font-mono">NETWORK CAPACITY STATS</h2>
+          <h2 class="sidebar-heading font-mono">NETWORK PRICING STATS</h2>
           <div class="stats-grid font-mono">
             <div class="stat-box">
               <span class="stat-number text-accent">{{ stats.totalSamples }}</span>
               <span class="stat-label">TOTAL NODES</span>
             </div>
             <div class="stat-box">
-              <span class="stat-number text-red">{{ stats.highDemandCount }}</span>
-              <span class="stat-label">SURCHARGE ZONES</span>
+              <span class="stat-number text-green">{{ stats.discountNodes }}</span>
+              <span class="stat-label">DISCOUNT NODES</span>
             </div>
             <div class="stat-box">
-              <span class="stat-number text-orange">${{ stats.avgSurcharge }}</span>
-              <span class="stat-label">AVG SURCHARGE</span>
+              <span class="stat-number text-orange">{{ stats.totalSamples > 0 ? '$' + stats.avgMonthly + '/mo' : '$0' }}</span>
+              <span class="stat-label">AVG SERVICE COST</span>
             </div>
             <div class="stat-box">
-              <span class="stat-number text-crimson">${{ stats.maxSurcharge }}</span>
-              <span class="stat-label">MAX SURCHARGE</span>
+              <span class="stat-number text-crimson">{{ stats.surchargesFound }}</span>
+              <span class="stat-label">SURCHARGES FOUND</span>
             </div>
           </div>
         </div>
@@ -255,10 +273,10 @@
         <div class="sidebar-section stack-specs font-mono">
           <h2 class="sidebar-heading">INFRASTRUCTURE STACK</h2>
           <ul class="specs-list">
+            <li><span class="spec-bullet">•</span> 4-Step Starlink Qualification Pipeline</li>
             <li><span class="spec-bullet">•</span> PostGIS / Supabase Geometries</li>
-            <li><span class="spec-bullet">•</span> Cloudflare Worker Live Proxy</li>
-            <li><span class="spec-bullet">•</span> Weekly GitHub Actions Cron</li>
-            <li><span class="spec-bullet">•</span> Haversine Proximity Cache (25 km)</li>
+            <li><span class="spec-bullet">•</span> Cloudflare Worker Edge Proxy</li>
+            <li><span class="spec-bullet">•</span> Weekly Rotating Honeycomb Grid</li>
           </ul>
         </div>
       </aside>
@@ -269,22 +287,22 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onBeforeUnmount } from 'vue';
 
-// Leaflet loaded via CDN in public index or dynamically imported
 declare const L: any;
 
 interface SurchargeRecord {
   id?: number | string;
   lat: number;
   lng: number;
+  monthly_service_fee?: number | null;
+  service_price_adjustment?: number;
   surcharge_amount: number | null;
-  status: 'standard' | 'high_demand' | 'sold_out' | 'unsampled';
+  status: 'standard' | 'discounted' | 'congested' | 'high_demand' | 'sold_out' | 'unsampled';
   sampled_at: string;
   sample_type?: string;
   location_name?: string;
   proximity_km?: number;
   isUnsampled?: boolean;
   isLiveVerified?: boolean;
-  monthly_service_fee?: number;
 }
 
 // Configurable Endpoints
@@ -314,26 +332,26 @@ const liveQueryError = ref<{ message: string; endpoint: string; lat: number; lng
 const filteredCount = ref(0);
 
 const tierFilters = reactive({
-  tier0: true,
-  tier1: true,
-  tier2: true,
-  tier3: true,
-  soldOut: true
+  tierDiscount: true,
+  tierStandard: true,
+  tierCongested: true,
+  tierSurcharge: true,
+  tierSoldOut: true
 });
 
 const tierCounts = reactive({
-  tier0: 0,
-  tier1: 0,
-  tier2: 0,
-  tier3: 0,
-  soldOut: 0
+  tierDiscount: 0,
+  tierStandard: 0,
+  tierCongested: 0,
+  tierSurcharge: 0,
+  tierSoldOut: 0
 });
 
 const stats = reactive({
   totalSamples: 0,
-  highDemandCount: 0,
-  avgSurcharge: 0,
-  maxSurcharge: 0
+  discountNodes: 0,
+  avgMonthly: 120,
+  surchargesFound: 0
 });
 
 // Map Engine References
@@ -342,12 +360,8 @@ let markersLayerGroup: any = null;
 let activePinMarker: any = null;
 let rawSurchargeData: SurchargeRecord[] = [];
 
-// Zero pre-loaded mock nodes. Populates only via genuine database ingestion.
-const BASELINE_SEEDS: SurchargeRecord[] = [];
-
-// Haversine Distance Calculator (km)
 function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371; // Earth's radius in km
+  const R = 6371;
   const dLat = (lat2 - lat1) * (Math.PI / 180);
   const dLon = (lon2 - lon1) * (Math.PI / 180);
   const a =
@@ -358,22 +372,55 @@ function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lo
   return R * c;
 }
 
-// Color and Tier Mapping
-function getTierColor(surcharge: number, status: string): string {
-  if (status === 'sold_out') return '#c084fc'; // Purple
-  if (surcharge >= 1000) return '#ef4444'; // Red
-  if (surcharge >= 500) return '#fb923c'; // Orange
-  if (surcharge >= 100) return '#facc15'; // Yellow
-  return '#22d3ee'; // Soft Cyan ($0 Standard)
+function getPointFee(rec: SurchargeRecord): number {
+  if (rec.monthly_service_fee !== undefined && rec.monthly_service_fee !== null) {
+    return rec.monthly_service_fee;
+  }
+  if (rec.status === 'discounted') return 55;
+  if (rec.status === 'congested') return 130;
+  return 120;
+}
+
+function isPending(rec: SurchargeRecord): boolean {
+  return !!rec.isUnsampled || rec.status === 'unsampled' || (rec.monthly_service_fee === null && rec.surcharge_amount === null);
+}
+
+function getTierColor(node: SurchargeRecord): string {
+  if (node.status === 'sold_out') return '#c084fc';
+  const s = node.surcharge_amount || 0;
+  if (s > 0) return '#ef4444';
+  const fee = getPointFee(node);
+  if (fee > 120) return '#f97316';
+  if (fee < 120) return '#10b981';
+  return '#38bdf8';
+}
+
+function getBannerClass(rec: SurchargeRecord): string {
+  if (rec.status === 'sold_out') return 'banner-sold_out';
+  if ((rec.surcharge_amount || 0) > 0) return 'banner-high_demand';
+  const fee = getPointFee(rec);
+  if (fee > 120) return 'banner-congested';
+  if (fee < 120) return 'banner-discount';
+  if (isPending(rec)) return 'banner-unsampled';
+  return 'banner-standard';
 }
 
 function getStatusTitle(rec: SurchargeRecord): string {
   if (rec.status === 'sold_out') return 'SOLD OUT / WAITLIST';
-  if (rec.surcharge_amount && rec.surcharge_amount >= 1000) return 'SEVERE CONGESTION SURCHARGE';
-  if (rec.surcharge_amount && rec.surcharge_amount >= 500) return 'HIGH DEMAND SURCHARGE';
-  if (rec.surcharge_amount && rec.surcharge_amount >= 100) return 'MODERATE SURCHARGE ZONE';
-  if (rec.isUnsampled || rec.status === 'unsampled' || rec.surcharge_amount === null) return 'UNSAMPLED CELL';
-  return 'STANDARD RESIDENTIAL CAPACITY ($0)';
+  if ((rec.surcharge_amount || 0) > 0) return 'CONGESTION SURCHARGE ZONE';
+  const fee = getPointFee(rec);
+  if (fee > 120) return 'CONGESTION ADJUSTED RATE';
+  if (fee < 120) return 'REGIONAL CAPACITY DISCOUNT';
+  if (isPending(rec)) return 'UNSAMPLED CELL';
+  return 'STANDARD RESIDENTIAL PLAN';
+}
+
+function getRateBreakdownText(rec: SurchargeRecord): string {
+  const fee = getPointFee(rec);
+  const adj = fee - 120;
+  if (adj > 0) return `+$${adj}/mo congestion adjustment above $120 base`;
+  if (adj < 0) return `-$${Math.abs(adj)}/mo excess capacity regional discount`;
+  return `Standard $120/mo base rate`;
 }
 
 function formatDate(dateStr: string): string {
@@ -389,16 +436,13 @@ function formatDate(dateStr: string): string {
   }
 }
 
-// Initialize Leaflet Map
 async function initMap() {
   if (typeof L === 'undefined') {
-    // Dynamically load Leaflet if not present on page
     await loadLeafletScript();
   }
 
   if (!mapCanvas.value) return;
 
-  // Center on Contiguous US
   mapInstance = L.map(mapCanvas.value, {
     center: [39.8283, -98.5795],
     zoom: 5,
@@ -407,16 +451,13 @@ async function initMap() {
     zoomControl: false
   });
 
-  // Zoom control positioned in bottom-right
   L.control.zoom({ position: 'bottomright' }).addTo(mapInstance);
 
-  // Esri World Dark Gray Canvas (100% Free, Zero API Key, Zero Watermark)
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
     attribution: '&copy; Esri &mdash; Esri, DeLorme, NAVTEQ',
     maxZoom: 16
   }).addTo(mapInstance);
 
-  // Dark Gray Reference Overlay (Labels & US State Borders)
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
     attribution: '',
     maxZoom: 16
@@ -424,12 +465,10 @@ async function initMap() {
 
   markersLayerGroup = L.layerGroup().addTo(mapInstance);
 
-  // Map Click Handler: Drop Pin & Inspect Local Cache
   mapInstance.on('click', (e: any) => {
     handleMapClick(e.latlng.lat, e.latlng.lng);
   });
 
-  // Load Data from Supabase (or fallback cache)
   await fetchSurchargeData();
 }
 
@@ -448,7 +487,6 @@ function loadLeafletScript(): Promise<void> {
   });
 }
 
-// Fetch Surcharge Points from Supabase PostGIS
 async function fetchSurchargeData() {
   try {
     const resp = await fetch(`${SUPABASE_URL}/rest/v1/starlink_surcharges?select=*&order=sampled_at.desc`, {
@@ -482,38 +520,47 @@ async function fetchSurchargeData() {
 }
 
 function computeStats() {
-  stats.totalSamples = rawSurchargeData.length;
-  let surcharges = 0;
-  let maxS = 0;
-  let highCount = 0;
+  const total = rawSurchargeData.length;
+  stats.totalSamples = total;
 
-  tierCounts.tier0 = 0;
-  tierCounts.tier1 = 0;
-  tierCounts.tier2 = 0;
-  tierCounts.tier3 = 0;
-  tierCounts.soldOut = 0;
+  let discCount = 0;
+  let stdCount = 0;
+  let congCount = 0;
+  let surchCount = 0;
+  let soldCount = 0;
+  let sumMonthly = 0;
+
+  tierCounts.tierDiscount = 0;
+  tierCounts.tierStandard = 0;
+  tierCounts.tierCongested = 0;
+  tierCounts.tierSurcharge = 0;
+  tierCounts.tierSoldOut = 0;
 
   for (const item of rawSurchargeData) {
     const s = item.surcharge_amount || 0;
-    if (s > maxS) maxS = s;
-    if (s > 0) {
-      surcharges += s;
-      highCount++;
-    }
+    const fee = getPointFee(item);
+    const isSold = item.status === 'sold_out';
 
-    if (item.status === 'sold_out') tierCounts.soldOut++;
-    else if (s >= 1000) tierCounts.tier3++;
-    else if (s >= 500) tierCounts.tier2++;
-    else if (s >= 100) tierCounts.tier1++;
-    else tierCounts.tier0++;
+    sumMonthly += fee;
+
+    if (isSold) soldCount++;
+    if (s > 0) surchCount++;
+    if (!isSold && fee < 120) discCount++;
+    else if (!isSold && fee === 120) stdCount++;
+    else if (!isSold && fee > 120) congCount++;
   }
 
-  stats.highDemandCount = highCount;
-  stats.avgSurcharge = highCount > 0 ? Math.round(surcharges / highCount) : 0;
-  stats.maxSurcharge = maxS;
+  tierCounts.tierDiscount = discCount;
+  tierCounts.tierStandard = stdCount;
+  tierCounts.tierCongested = congCount;
+  tierCounts.tierSurcharge = surchCount;
+  tierCounts.tierSoldOut = soldCount;
+
+  stats.discountNodes = discCount;
+  stats.surchargesFound = surchCount;
+  stats.avgMonthly = total > 0 ? Math.round(sumMonthly / total) : 120;
 }
 
-// Render Surcharge Nodes onto Leaflet Layer
 function renderMarkers() {
   if (!markersLayerGroup) return;
   markersLayerGroup.clearLayers();
@@ -521,18 +568,18 @@ function renderMarkers() {
   let count = 0;
   for (const node of rawSurchargeData) {
     const s = node.surcharge_amount || 0;
-    const isSoldOut = node.status === 'sold_out';
+    const fee = getPointFee(node);
+    const isSold = node.status === 'sold_out';
 
-    // Apply Tier Visibility Filters
-    if (isSoldOut && !tierFilters.soldOut) continue;
-    if (!isSoldOut && s === 0 && !tierFilters.tier0) continue;
-    if (!isSoldOut && s >= 100 && s < 500 && !tierFilters.tier1) continue;
-    if (!isSoldOut && s >= 500 && s < 1000 && !tierFilters.tier2) continue;
-    if (!isSoldOut && s >= 1000 && !tierFilters.tier3) continue;
+    if (isSold && !tierFilters.tierSoldOut) continue;
+    if (s > 0 && !tierFilters.tierSurcharge) continue;
+    if (!isSold && s === 0 && fee < 120 && !tierFilters.tierDiscount) continue;
+    if (!isSold && s === 0 && fee === 120 && !tierFilters.tierStandard) continue;
+    if (!isSold && s === 0 && fee > 120 && !tierFilters.tierCongested) continue;
 
     count++;
-    const color = getTierColor(s, node.status);
-    const radius = s >= 1000 ? 9 : s >= 500 ? 8 : s >= 100 ? 7 : 5;
+    const color = getTierColor(node);
+    const radius = s > 0 ? 8.5 : fee > 120 ? 7.5 : fee < 120 ? 7.0 : 6.0;
 
     const marker = L.circleMarker([node.lat, node.lng], {
       radius,
@@ -540,8 +587,20 @@ function renderMarkers() {
       color: '#ffffff',
       weight: 1.2,
       opacity: 0.9,
-      fillOpacity: 0.75
+      fillOpacity: 0.8
     });
+
+    const tip = isSold
+      ? 'Waitlist / Sold Out'
+      : s > 0
+        ? `$${fee}/mo (+$${s} Surcharge)`
+        : fee < 120
+          ? `$${fee}/mo (Regional Discount)`
+          : fee > 120
+            ? `$${fee}/mo (Congestion Rate)`
+            : `$120/mo Standard`;
+
+    marker.bindTooltip(tip, { direction: 'top', offset: [0, -6] });
 
     marker.on('click', (e: any) => {
       L.DomEvent.stopPropagation(e);
@@ -557,12 +616,10 @@ function applyTierFilters() {
   renderMarkers();
 }
 
-// Map Click: Check 25 km Proximity Cache
 function handleMapClick(lat: number, lng: number) {
   let nearestNode: SurchargeRecord | null = null;
   let minDistance = Infinity;
 
-  // Local spatial calculation using Haversine
   for (const node of rawSurchargeData) {
     const dist = calculateHaversineDistance(lat, lng, node.lat, node.lng);
     if (dist < minDistance) {
@@ -580,10 +637,10 @@ function handleMapClick(lat: number, lng: number) {
       location_name: nearestNode.location_name || `Area near ${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W`
     };
   } else {
-    // Uncached location
     inspectedLocation.value = {
       lat,
       lng,
+      monthly_service_fee: null,
       surcharge_amount: null,
       status: 'unsampled',
       isUnsampled: true,
@@ -631,7 +688,6 @@ function retryLiveWorkerCheck() {
   }
 }
 
-// Live Cloudflare Worker Lookup Proxy (Strict Live Query Mode)
 async function triggerLiveWorkerCheck(lat: number, lng: number) {
   isCheckingLive.value = true;
   liveQueryError.value = null;
@@ -651,13 +707,14 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
         const updatedRecord: SurchargeRecord = {
           lat: result.lat,
           lng: result.lng,
+          monthly_service_fee: result.monthly_service_fee,
+          service_price_adjustment: result.service_price_adjustment,
           surcharge_amount: result.surcharge_amount,
           status: result.status,
           sampled_at: result.timestamp || new Date().toISOString(),
           location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
           proximity_km: result.distance_km || 0,
           isLiveVerified: result.source === 'verified_live',
-          monthly_service_fee: result.monthly_service_fee,
           isUnsampled: false
         };
         inspectedLocation.value = updatedRecord;
@@ -673,10 +730,10 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
         computeStats();
         renderMarkers();
       } else {
-        // Unsampled result returned
         inspectedLocation.value = {
           lat: result.lat,
           lng: result.lng,
+          monthly_service_fee: result.monthly_service_fee,
           surcharge_amount: result.surcharge_amount,
           status: result.status || 'unsampled',
           sampled_at: result.timestamp || new Date().toISOString(),
@@ -688,21 +745,21 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
       dropRadarPin(lat, lng);
     } else {
       let errBody = '';
-      try { errBody = await resp.text(); } catch (e) {}
+      try { errBody = await resp.text(); } catch {}
       liveQueryError.value = {
-        message: `HTTP ${resp.status} (${resp.statusText}): ${errBody || 'Proxy returned an error'}`,
+        message: `HTTP ${resp.status} (${resp.statusText}): ${errBody || 'Proxy error'}`,
         endpoint: targetUrl,
         lat,
         lng
       };
     }
   } catch (err: any) {
-    console.error('Failed to trigger live surcharge checker:', err);
+    console.error('Failed to trigger live service cost check:', err);
     let reason = '';
     if (err.name === 'AbortError') {
       reason = 'Request timed out after 12 seconds. The Worker API endpoint did not respond.';
     } else {
-      reason = `Network connection failed (${err.message || 'DNS Resolution Failed'}). The Worker has not been deployed to this URL yet, or is blocked by network/CORS policy.`;
+      reason = `Network connection failed (${err.message || 'DNS Resolution Failed'}).`;
     }
 
     liveQueryError.value = {
@@ -716,7 +773,6 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
   }
 }
 
-// Geocoding Search via OpenStreetMap Nominatim
 let searchDebounceTimer: any = null;
 function onSearchInput() {
   clearTimeout(searchDebounceTimer);
@@ -793,9 +849,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* ==========================================================================
-   STARLINK HIGH-DEMAND SURCHARGE TELEMETRY STYLING (tjhansen.net Native)
-   ========================================================================== */
 .starlink-map-container {
   position: relative;
   width: 100%;
@@ -951,8 +1004,8 @@ onBeforeUnmount(() => {
   list-style: none;
   padding: 6px 0;
   margin: 0;
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.6);
-  z-index: 200;
+  z-index: 120;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7);
   max-height: 280px;
   overflow-y: auto;
 }
@@ -960,8 +1013,8 @@ onBeforeUnmount(() => {
 .search-dropdown-item {
   padding: 8px 14px;
   cursor: pointer;
-  transition: background 150ms ease;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background 120ms ease;
 }
 .search-dropdown-item:last-child {
   border-bottom: none;
@@ -969,13 +1022,17 @@ onBeforeUnmount(() => {
 .search-dropdown-item:hover {
   background: rgba(56, 189, 248, 0.1);
 }
+
 .item-name {
   font-size: 0.82rem;
   color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .item-coords {
-  font-size: 0.72rem;
-  color: #94a3b8;
+  font-size: 0.68rem;
+  color: #64748b;
   margin-top: 2px;
 }
 
@@ -983,48 +1040,51 @@ onBeforeUnmount(() => {
 .hud-controls {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
 }
 
 .status-indicator {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 0.72rem;
-  color: #94a3b8;
 }
 
 .pulse-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background-color: #eab308;
-  box-shadow: 0 0 8px rgba(234, 179, 8, 0.6);
+  background: #eab308;
 }
 .pulse-dot.online {
-  background-color: #22c55e;
-  box-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+}
+
+.status-label {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  letter-spacing: 0.05em;
 }
 
 .hud-action-btn {
   display: flex;
   align-items: center;
   gap: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
   padding: 6px 12px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  color: #f1f5f9;
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   cursor: pointer;
   transition: all 180ms ease;
 }
 .hud-action-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.1);
+  color: #f8fafc;
 }
 
-/* Viewport & Map */
+/* Main Workspace */
 .map-viewport-wrapper {
   flex: 1;
   position: relative;
@@ -1052,7 +1112,7 @@ onBeforeUnmount(() => {
   padding: 14px 16px;
   z-index: 50;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
-  min-width: 230px;
+  min-width: 250px;
 }
 
 .legend-header {
@@ -1095,9 +1155,9 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   display: inline-block;
 }
-.swatch-cyan { background-color: #22d3ee; box-shadow: 0 0 6px rgba(34, 211, 238, 0.7); }
-.swatch-yellow { background-color: #facc15; box-shadow: 0 0 6px rgba(250, 204, 21, 0.7); }
-.swatch-orange { background-color: #fb923c; box-shadow: 0 0 6px rgba(251, 146, 60, 0.7); }
+.swatch-green { background-color: #10b981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.7); }
+.swatch-cyan { background-color: #38bdf8; box-shadow: 0 0 6px rgba(56, 189, 248, 0.7); }
+.swatch-orange { background-color: #f97316; box-shadow: 0 0 6px rgba(249, 115, 22, 0.7); }
 .swatch-red { background-color: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.7); }
 .swatch-purple { background-color: #c084fc; box-shadow: 0 0 6px rgba(192, 132, 252, 0.7); }
 
@@ -1192,13 +1252,40 @@ onBeforeUnmount(() => {
   background: rgba(56, 189, 248, 0.1);
   border-bottom: 1px solid rgba(56, 189, 248, 0.2);
 }
+.banner-discount {
+  background: rgba(16, 185, 129, 0.14);
+  border-bottom-color: rgba(16, 185, 129, 0.3);
+}
+.banner-discount .banner-surcharge {
+  color: #34d399;
+}
+.banner-standard {
+  background: rgba(56, 189, 248, 0.12);
+  border-bottom-color: rgba(56, 189, 248, 0.25);
+}
+.banner-standard .banner-surcharge {
+  color: #38bdf8;
+}
+.banner-congested {
+  background: rgba(249, 115, 22, 0.14);
+  border-bottom-color: rgba(249, 115, 22, 0.3);
+}
+.banner-congested .banner-surcharge {
+  color: #fb923c;
+}
 .banner-high_demand {
   background: rgba(239, 68, 68, 0.15);
   border-bottom-color: rgba(239, 68, 68, 0.3);
 }
+.banner-high_demand .banner-surcharge {
+  color: #ef4444;
+}
 .banner-sold_out {
   background: rgba(192, 132, 252, 0.15);
   border-bottom-color: rgba(192, 132, 252, 0.3);
+}
+.banner-sold_out .banner-surcharge {
+  color: #c084fc;
 }
 .banner-unsampled {
   background: rgba(148, 163, 184, 0.1);
@@ -1216,10 +1303,34 @@ onBeforeUnmount(() => {
 .banner-surcharge {
   font-size: 1.15rem;
   font-weight: 700;
-  color: #38bdf8;
 }
-.banner-high_demand .banner-surcharge {
-  color: #ef4444;
+
+.surcharge-alert-banner {
+  margin: 10px 14px 2px 14px;
+  padding: 8px 12px;
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #fca5a5;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.surcharge-none-banner {
+  margin: 8px 14px 0 14px;
+  padding: 6px 12px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #6ee7b7;
+  font-size: 0.72rem;
 }
 
 .card-details {
@@ -1244,54 +1355,6 @@ onBeforeUnmount(() => {
 .card-actions {
   padding: 14px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.starlink-verify-link {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  padding: 11px 14px;
-  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-  border: 1px solid rgba(96, 165, 250, 0.4);
-  color: #ffffff;
-  border-radius: 6px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-decoration: none;
-  transition: all 180ms ease;
-  margin-bottom: 8px;
-  box-sizing: border-box;
-}
-.starlink-verify-link:hover {
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-  box-shadow: 0 0 16px rgba(59, 130, 246, 0.4);
-  color: #ffffff;
-}
-
-.worker-secondary-btn {
-  width: 100%;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #94a3b8;
-  border-radius: 6px;
-  font-size: 0.72rem;
-  font-weight: 500;
-  letter-spacing: 0.03em;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  transition: all 180ms ease;
-}
-.worker-secondary-btn:hover:not(:disabled) {
-  background: rgba(56, 189, 248, 0.08);
-  color: #38bdf8;
-  border-color: rgba(56, 189, 248, 0.3);
 }
 
 .live-check-btn {
@@ -1370,7 +1433,7 @@ onBeforeUnmount(() => {
 }
 
 .text-accent { color: #38bdf8; }
-.text-red { color: #ef4444; }
+.text-green { color: #34d399; }
 .text-orange { color: #fb923c; }
 .text-crimson { color: #f43f5e; }
 
@@ -1388,6 +1451,84 @@ onBeforeUnmount(() => {
 .spec-bullet {
   color: #38bdf8;
   margin-right: 4px;
+}
+
+/* Error Diagnostic Card */
+.card-error {
+  border-color: rgba(239, 68, 68, 0.35);
+}
+.error-detail-box {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.error-detail-title {
+  color: #ef4444;
+  font-weight: 600;
+  font-size: 0.7rem;
+  margin-bottom: 4px;
+}
+.error-detail-msg {
+  color: #fca5a5;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+.error-endpoint-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+.endpoint-code {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: #e2e8f0;
+  word-break: break-all;
+}
+
+.worker-config-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.config-label {
+  font-size: 0.7rem;
+  color: #94a3b8;
+}
+.config-input-group {
+  display: flex;
+  gap: 6px;
+}
+.config-url-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #ffffff;
+  font-size: 0.72rem;
+}
+.config-save-btn {
+  background: #0284c7;
+  color: #ffffff;
+  border: none;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.config-help {
+  font-size: 0.68rem;
+  color: #64748b;
+  line-height: 1.4;
 }
 
 /* Radar Animation Marker */
@@ -1454,4 +1595,3 @@ onBeforeUnmount(() => {
   }
 }
 </style>
-
