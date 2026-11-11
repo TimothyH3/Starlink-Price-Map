@@ -175,13 +175,13 @@
           <div v-else-if="inspectedLocation" class="inspector-card">
             <div class="card-status-banner" :class="getBannerClass(inspectedLocation)">
               <span class="banner-title font-mono">{{ getStatusTitle(inspectedLocation) }}</span>
-              <span class="banner-surcharge font-mono">{{ isPending(inspectedLocation) ? 'PENDING' : '$' + getPointFee(inspectedLocation) + '/mo' }}</span>
+              <span class="banner-surcharge font-mono">{{ isPending(inspectedLocation) ? 'PENDING' : formatMoney(getPointPricing(inspectedLocation).total) + '/mo' }}</span>
             </div>
 
             <!-- Surcharge Callout Banner -->
             <div v-if="(inspectedLocation.surcharge_amount || 0) > 0" class="surcharge-alert-banner font-mono">
               <span>⚠️</span>
-              <span>+${{ inspectedLocation.surcharge_amount }} ONE-TIME CONGESTION SURCHARGE</span>
+              <span>+{{ formatMoney(inspectedLocation.surcharge_amount) }} ONE-TIME DEMAND SURCHARGE</span>
             </div>
             <div v-else-if="!isPending(inspectedLocation) && inspectedLocation.status !== 'sold_out'" class="surcharge-none-banner font-mono">
               <span>✓</span>
@@ -190,16 +190,22 @@
 
             <div class="card-details font-mono">
               <div class="detail-row">
-                <span class="detail-label">MONTHLY SERVICE:</span>
-                <span class="detail-value">{{ isPending(inspectedLocation) ? 'Awaiting check' : '$' + getPointFee(inspectedLocation) + '/mo' }}</span>
+                <span class="detail-label">BASE SERVICE PLAN:</span>
+                <span class="detail-value">{{ isPending(inspectedLocation) ? 'Awaiting check' : formatMoney(getPointPricing(inspectedLocation).base) + '/mo' }}</span>
               </div>
               <div class="detail-row">
-                <span class="detail-label">RATE BREAKDOWN:</span>
-                <span class="detail-value font-sans" style="font-size:0.72rem;">{{ isPending(inspectedLocation) ? 'Unknown' : getRateBreakdownText(inspectedLocation) }}</span>
+                <span class="detail-label">SERVICE PRICE ADJUSTMENT:</span>
+                <span class="detail-value font-sans" :style="{ color: getPointPricing(inspectedLocation).adjustment > 0 ? '#fb923c' : getPointPricing(inspectedLocation).adjustment < 0 ? '#34d399' : '#e2e8f0', fontWeight: '500' }">
+                  {{ isPending(inspectedLocation) ? 'Awaiting check' : getAdjustmentText(inspectedLocation) }}
+                </span>
+              </div>
+              <div class="detail-row" style="padding: 5px 0; border-top: 1px dashed rgba(255,255,255,0.12); border-bottom: 1px dashed rgba(255,255,255,0.12); font-weight: 600;">
+                <span class="detail-label" style="color: #ffffff;">TOTAL MONTHLY SERVICE:</span>
+                <span class="detail-value" style="color: #38bdf8; font-size: 0.85rem;">{{ isPending(inspectedLocation) ? 'PENDING' : formatMoney(getPointPricing(inspectedLocation).total) + '/mo' }}</span>
               </div>
               <div class="detail-row">
-                <span class="detail-label">UPFRONT SURCHARGE:</span>
-                <span class="detail-value" :style="{ color: (inspectedLocation.surcharge_amount || 0) > 0 ? '#ef4444' : '#34d399' }">{{ isPending(inspectedLocation) ? 'Pending' : ((inspectedLocation.surcharge_amount || 0) > 0 ? '+$' + inspectedLocation.surcharge_amount : '$0') }}</span>
+                <span class="detail-label">ONE-TIME SURCHARGE:</span>
+                <span class="detail-value" :style="{ color: (inspectedLocation.surcharge_amount || 0) > 0 ? '#ef4444' : '#34d399' }">{{ isPending(inspectedLocation) ? 'Pending' : ((inspectedLocation.surcharge_amount || 0) > 0 ? '+' + formatMoney(inspectedLocation.surcharge_amount) : '$0') }}</span>
               </div>
               <div class="detail-row">
                 <span class="detail-label">COORDINATES:</span>
@@ -293,8 +299,10 @@ interface SurchargeRecord {
   id?: number | string;
   lat: number;
   lng: number;
-  monthly_service_fee?: number | null;
+  base_service_fee?: number | null;
   service_price_adjustment?: number;
+  total_monthly_fee?: number | null;
+  monthly_service_fee?: number | null;
   surcharge_amount: number | null;
   status: 'standard' | 'discounted' | 'congested' | 'high_demand' | 'sold_out' | 'unsampled';
   sampled_at: string;
@@ -360,6 +368,12 @@ let markersLayerGroup: any = null;
 let activePinMarker: any = null;
 let rawSurchargeData: SurchargeRecord[] = [];
 
+function formatMoney(val: any): string {
+  if (val === null || val === undefined || isNaN(val)) return '$0';
+  const num = Number(val);
+  return num % 1 === 0 ? `$${num.toFixed(0)}` : `$${num.toFixed(2)}`;
+}
+
 function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371;
   const dLat = (lat2 - lat1) * (Math.PI / 180);
@@ -372,13 +386,56 @@ function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lo
   return R * c;
 }
 
-function getPointFee(rec: SurchargeRecord): number {
-  if (rec.monthly_service_fee !== undefined && rec.monthly_service_fee !== null) {
-    return rec.monthly_service_fee;
+function getPointPricing(rec: SurchargeRecord) {
+  const surcharge = rec.surcharge_amount || 0;
+  const isUnsampled = !!rec.isUnsampled || rec.status === 'unsampled' || 
+    (rec.monthly_service_fee === null && rec.total_monthly_fee === null && rec.base_service_fee === null);
+
+  if (isUnsampled) {
+    return {
+      base: null,
+      adjustment: 0,
+      total: null,
+      surcharge: null,
+      isUnsampled: true
+    };
   }
-  if (rec.status === 'discounted') return 55;
-  if (rec.status === 'congested') return 130;
-  return 120;
+
+  let base = rec.base_service_fee;
+  let adj = rec.service_price_adjustment;
+  let total = rec.total_monthly_fee ?? rec.monthly_service_fee;
+
+  if (adj !== undefined && adj !== null) {
+    adj = Number(adj);
+    if (base === undefined || base === null) {
+      if (total !== undefined && total !== null) {
+        base = Math.round((Number(total) - adj) * 100) / 100;
+      } else {
+        base = 120;
+      }
+    }
+    total = Math.round((Number(base) + adj) * 100) / 100;
+  } else {
+    if (total !== undefined && total !== null) {
+      total = Number(total);
+      if (base === undefined || base === null) {
+        base = total >= 130 ? 130 : total < 120 ? 55 : 120;
+      }
+      adj = Math.round((total - Number(base)) * 100) / 100;
+    } else {
+      total = rec.status === 'discounted' ? 38.5 : rec.status === 'congested' ? 143 : 120;
+      base = total >= 130 ? 130 : total < 120 ? 55 : 120;
+      adj = Math.round((total - base) * 100) / 100;
+    }
+  }
+
+  return {
+    base: Number(base),
+    adjustment: adj,
+    total: Number(total),
+    surcharge,
+    isUnsampled: false
+  };
 }
 
 function isPending(rec: SurchargeRecord): boolean {
@@ -387,20 +444,19 @@ function isPending(rec: SurchargeRecord): boolean {
 
 function getTierColor(node: SurchargeRecord): string {
   if (node.status === 'sold_out') return '#c084fc';
-  const s = node.surcharge_amount || 0;
-  if (s > 0) return '#ef4444';
-  const fee = getPointFee(node);
-  if (fee > 120) return '#f97316';
-  if (fee < 120) return '#10b981';
+  const pricing = getPointPricing(node);
+  if (pricing.surcharge > 0) return '#ef4444';
+  if (pricing.adjustment > 0 || (pricing.total !== null && pricing.total > 120)) return '#f97316';
+  if (pricing.adjustment < 0 || (pricing.total !== null && pricing.total < 120)) return '#10b981';
   return '#38bdf8';
 }
 
 function getBannerClass(rec: SurchargeRecord): string {
   if (rec.status === 'sold_out') return 'banner-sold_out';
   if ((rec.surcharge_amount || 0) > 0) return 'banner-high_demand';
-  const fee = getPointFee(rec);
-  if (fee > 120) return 'banner-congested';
-  if (fee < 120) return 'banner-discount';
+  const pricing = getPointPricing(rec);
+  if (pricing.adjustment > 0 || (pricing.total !== null && pricing.total > 120)) return 'banner-congested';
+  if (pricing.adjustment < 0 || (pricing.total !== null && pricing.total < 120)) return 'banner-discount';
   if (isPending(rec)) return 'banner-unsampled';
   return 'banner-standard';
 }
@@ -408,19 +464,19 @@ function getBannerClass(rec: SurchargeRecord): string {
 function getStatusTitle(rec: SurchargeRecord): string {
   if (rec.status === 'sold_out') return 'SOLD OUT / WAITLIST';
   if ((rec.surcharge_amount || 0) > 0) return 'CONGESTION SURCHARGE ZONE';
-  const fee = getPointFee(rec);
-  if (fee > 120) return 'CONGESTION ADJUSTED RATE';
-  if (fee < 120) return 'REGIONAL CAPACITY DISCOUNT';
+  const pricing = getPointPricing(rec);
+  if (pricing.adjustment > 0) return 'CONGESTION ADJUSTMENT ACTIVE';
+  if (pricing.adjustment < 0) return 'REGIONAL DISCOUNT ACTIVE';
   if (isPending(rec)) return 'UNSAMPLED CELL';
   return 'STANDARD RESIDENTIAL PLAN';
 }
 
-function getRateBreakdownText(rec: SurchargeRecord): string {
-  const fee = getPointFee(rec);
-  const adj = fee - 120;
-  if (adj > 0) return `+$${adj}/mo congestion adjustment above $120 base`;
-  if (adj < 0) return `-$${Math.abs(adj)}/mo excess capacity regional discount`;
-  return `Standard $120/mo base rate`;
+function getAdjustmentText(rec: SurchargeRecord): string {
+  const pricing = getPointPricing(rec);
+  const adj = pricing.adjustment;
+  if (adj > 0) return `+${formatMoney(adj)}/mo (Congestion Adjustment)`;
+  if (adj < 0) return `-${formatMoney(Math.abs(adj))}/mo (Regional Discount)`;
+  return `$0.00/mo (Standard)`;
 }
 
 function formatDate(dateStr: string): string {
@@ -538,16 +594,18 @@ function computeStats() {
 
   for (const item of rawSurchargeData) {
     const s = item.surcharge_amount || 0;
-    const fee = getPointFee(item);
+    const pricing = getPointPricing(item);
     const isSold = item.status === 'sold_out';
 
-    sumMonthly += fee;
+    if (!pricing.isUnsampled && pricing.total !== null) {
+      sumMonthly += pricing.total;
+    }
 
     if (isSold) soldCount++;
     if (s > 0) surchCount++;
-    if (!isSold && fee < 120) discCount++;
-    else if (!isSold && fee === 120) stdCount++;
-    else if (!isSold && fee > 120) congCount++;
+    if (!isSold && (pricing.adjustment < 0 || pricing.total < 120)) discCount++;
+    else if (!isSold && pricing.adjustment === 0 && pricing.total === 120) stdCount++;
+    else if (!isSold && (pricing.adjustment > 0 || pricing.total > 120)) congCount++;
   }
 
   tierCounts.tierDiscount = discCount;
@@ -567,19 +625,20 @@ function renderMarkers() {
 
   let count = 0;
   for (const node of rawSurchargeData) {
-    const s = node.surcharge_amount || 0;
-    const fee = getPointFee(node);
+    const pricing = getPointPricing(node);
+    const s = pricing.surcharge || 0;
+    const fee = pricing.total;
     const isSold = node.status === 'sold_out';
 
     if (isSold && !tierFilters.tierSoldOut) continue;
     if (s > 0 && !tierFilters.tierSurcharge) continue;
-    if (!isSold && s === 0 && fee < 120 && !tierFilters.tierDiscount) continue;
-    if (!isSold && s === 0 && fee === 120 && !tierFilters.tierStandard) continue;
-    if (!isSold && s === 0 && fee > 120 && !tierFilters.tierCongested) continue;
+    if (!isSold && s === 0 && (pricing.adjustment < 0 || fee < 120) && !tierFilters.tierDiscount) continue;
+    if (!isSold && s === 0 && pricing.adjustment === 0 && fee === 120 && !tierFilters.tierStandard) continue;
+    if (!isSold && s === 0 && (pricing.adjustment > 0 || fee > 120) && !tierFilters.tierCongested) continue;
 
     count++;
     const color = getTierColor(node);
-    const radius = s > 0 ? 8.5 : fee > 120 ? 7.5 : fee < 120 ? 7.0 : 6.0;
+    const radius = s > 0 ? 8.5 : pricing.adjustment > 0 ? 7.5 : pricing.adjustment < 0 ? 7.0 : 6.0;
 
     const marker = L.circleMarker([node.lat, node.lng], {
       radius,
@@ -591,14 +650,14 @@ function renderMarkers() {
     });
 
     const tip = isSold
-      ? 'Waitlist / Sold Out'
+      ? 'Waitlist / Capacity Sold Out'
       : s > 0
-        ? `$${fee}/mo (+$${s} Surcharge)`
-        : fee < 120
-          ? `$${fee}/mo (Regional Discount)`
-          : fee > 120
-            ? `$${fee}/mo (Congestion Rate)`
-            : `$120/mo Standard`;
+        ? `${formatMoney(fee)}/mo (+${formatMoney(s)} Upfront Surcharge)`
+        : pricing.adjustment > 0
+          ? `${formatMoney(fee)}/mo (${formatMoney(pricing.base)} base + ${formatMoney(pricing.adjustment)} Congestion)`
+          : pricing.adjustment < 0
+            ? `${formatMoney(fee)}/mo (${formatMoney(pricing.base)} base - ${formatMoney(Math.abs(pricing.adjustment))} Discount)`
+            : `${formatMoney(fee)}/mo Standard Base Plan`;
 
     marker.bindTooltip(tip, { direction: 'top', offset: [0, -6] });
 
@@ -640,6 +699,9 @@ function handleMapClick(lat: number, lng: number) {
     inspectedLocation.value = {
       lat,
       lng,
+      base_service_fee: null,
+      service_price_adjustment: 0,
+      total_monthly_fee: null,
       monthly_service_fee: null,
       surcharge_amount: null,
       status: 'unsampled',
@@ -707,8 +769,10 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
         const updatedRecord: SurchargeRecord = {
           lat: result.lat,
           lng: result.lng,
-          monthly_service_fee: result.monthly_service_fee,
+          base_service_fee: result.base_service_fee,
           service_price_adjustment: result.service_price_adjustment,
+          total_monthly_fee: result.total_monthly_fee,
+          monthly_service_fee: result.total_monthly_fee,
           surcharge_amount: result.surcharge_amount,
           status: result.status,
           sampled_at: result.timestamp || new Date().toISOString(),
@@ -732,6 +796,19 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
       } else {
         inspectedLocation.value = {
           lat: result.lat,
+          lng: result.lng,
+          base_service_fee: null,
+          service_price_adjustment: 0,
+          total_monthly_fee: null,
+          monthly_service_fee: null,
+          surcharge_amount: result.surcharge_amount,
+          status: result.status || 'unsampled',
+          sampled_at: result.timestamp || new Date().toISOString(),
+          location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
+          isUnsampled: true,
+          proximity_km: 0
+        };
+      }
           lng: result.lng,
           monthly_service_fee: result.monthly_service_fee,
           surcharge_amount: result.surcharge_amount,

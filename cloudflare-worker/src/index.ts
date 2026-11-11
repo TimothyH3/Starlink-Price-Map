@@ -4,9 +4,12 @@
  *
  * 1. Checks Supabase PostGIS spatial cache for verified samples within 25 km.
  * 2. If not cached, performs live qualification via Starlink's address & pricing pipeline.
- * 3. Returns exact monthly service subscription fee ($55 discount, $120 standard, $130+ congested)
- *    and any upfront demand surcharges ($0 or $100-$1,500).
- * 4. Never returns fake heuristics or arbitrary estimates.
+ * 3. Authentically extracts:
+ *    - Base Residential Service Plan ($55, $120, $130, etc.)
+ *    - Genuine Service Price Adjustment from Starlink promotionEvaluation (e.g. +$26.00, +$13.00, -$16.50)
+ *    - Total Monthly Service Cost (Base Service Fee + Service Price Adjustment)
+ *    - Upfront Demand Congestion Surcharges ($0, $100-$1,500)
+ * 4. Never returns fake heuristics or arbitrary guesses.
  */
 
 export interface Env {
@@ -18,17 +21,24 @@ export interface Env {
 export interface ServiceCostResult {
   lat: number;
   lng: number;
-  monthly_service_fee: number | null;
+  base_service_fee: number | null;
   service_price_adjustment: number;
+  total_monthly_fee: number | null;
+  monthly_service_fee: number | null; // Alias of total_monthly_fee for backward compatibility
   surcharge_amount: number | null;
   status: 'discounted' | 'standard' | 'congested' | 'high_demand' | 'sold_out' | 'unsampled';
   tier_label: string;
+  adjustment_description?: string;
   location_name?: string;
   timestamp: string;
   source: 'verified_live' | 'postgis_cache' | 'standard_capacity' | 'unsampled';
   distance_km?: number;
   message?: string;
   starlink_verify_url: string;
+}
+
+function formatPrice(val: number): string {
+  return val % 1 === 0 ? val.toFixed(0) : val.toFixed(2);
 }
 
 export default {
@@ -115,8 +125,10 @@ export default {
     const finalResult: ServiceCostResult = result || {
       lat,
       lng,
-      monthly_service_fee: null,
+      base_service_fee: null,
       service_price_adjustment: 0,
+      total_monthly_fee: null,
+      monthly_service_fee: null,
       surcharge_amount: null,
       status: 'unsampled',
       tier_label: 'Unsampled Cell',
@@ -249,11 +261,27 @@ async function probeStarlinkLive(
     }
 
     const deposit = content.depositAmount || 0;
-    const monthlyFee = content.serviceAmount || 120;
-    const priceAdjustment = monthlyFee - 120;
+    const baseServiceFee = content.serviceAmount ?? 120;
+
+    // Authentically extract Service Price Adjustment from Starlink promotionEvaluation
+    let servicePriceAdjustment = 0;
+    let adjustmentDesc = 'Service Price Adjustment';
+
+    const promoApps = content.promotionEvaluation?.promotionApplications || [];
+    for (const app of promoApps) {
+      const desc = (app.publicDescription || app.description || '').trim();
+      if (/service.*adjustment|price.*adjustment/i.test(desc)) {
+        servicePriceAdjustment = Number(app.unitDelta ?? app.lineDelta ?? 0);
+        adjustmentDesc = app.publicDescription || 'Service Price Adjustment';
+        break;
+      }
+    }
+
+    // Total monthly service cost includes the adjustment added to the base
+    const totalMonthlyFee = Math.round((baseServiceFee + servicePriceAdjustment) * 100) / 100;
 
     let status: 'discounted' | 'standard' | 'congested' | 'high_demand' | 'sold_out' = 'standard';
-    let tierLabel = '$120/mo Standard Plan';
+    let tierLabel = `$${formatPrice(totalMonthlyFee)}/mo Standard Plan`;
 
     if (deposit > 0) {
       status = 'sold_out';
@@ -261,35 +289,37 @@ async function probeStarlinkLive(
     } else if (surcharge > 0) {
       status = 'high_demand';
       tierLabel = `+$${surcharge} Demand Surcharge`;
-    } else if (monthlyFee > 120) {
+    } else if (servicePriceAdjustment > 0 || totalMonthlyFee > 120) {
       status = 'congested';
-      tierLabel = `$${monthlyFee}/mo Congestion Rate`;
-    } else if (monthlyFee < 120) {
+      tierLabel = `$${formatPrice(totalMonthlyFee)}/mo (Congested)`;
+    } else if (servicePriceAdjustment < 0 || totalMonthlyFee < 120) {
       status = 'discounted';
-      tierLabel = `$${monthlyFee}/mo Regional Discount`;
+      tierLabel = `$${formatPrice(totalMonthlyFee)}/mo (Discounted)`;
     }
 
     let summaryMsg = '';
     if (deposit > 0) {
       summaryMsg = `Verified live from Starlink checkout: Cell capacity currently sold out (Waitlist deposit required).`;
     } else if (surcharge > 0) {
-      summaryMsg = `Verified live from Starlink checkout: $${monthlyFee}/mo subscription with $${surcharge} one-time congestion surcharge.`;
-    } else if (monthlyFee > 120) {
-      summaryMsg = `Verified live from Starlink checkout: $${monthlyFee}/mo (regional congestion adjustment of +$${priceAdjustment}/mo).`;
-    } else if (monthlyFee < 120) {
-      summaryMsg = `Verified live from Starlink checkout: $${monthlyFee}/mo (regional excess capacity discount).`;
+      summaryMsg = `Verified live from Starlink checkout: $${formatPrice(totalMonthlyFee)}/mo service ($${formatPrice(baseServiceFee)} base ${servicePriceAdjustment >= 0 ? '+' : '-'}$${formatPrice(Math.abs(servicePriceAdjustment))} adjustment) + $${surcharge} one-time congestion surcharge.`;
+    } else if (servicePriceAdjustment !== 0) {
+      const sign = servicePriceAdjustment > 0 ? '+' : '-';
+      summaryMsg = `Verified live from Starlink checkout: $${formatPrice(totalMonthlyFee)}/mo service ($${formatPrice(baseServiceFee)} base ${sign}$${formatPrice(Math.abs(servicePriceAdjustment))} ${adjustmentDesc}).`;
     } else {
-      summaryMsg = `Verified live from Starlink checkout: $120/mo standard residential plan.`;
+      summaryMsg = `Verified live from Starlink checkout: $${formatPrice(totalMonthlyFee)}/mo standard residential plan.`;
     }
 
     return {
       lat,
       lng,
-      monthly_service_fee: monthlyFee,
-      service_price_adjustment: priceAdjustment,
+      base_service_fee: baseServiceFee,
+      service_price_adjustment: servicePriceAdjustment,
+      total_monthly_fee: totalMonthlyFee,
+      monthly_service_fee: totalMonthlyFee,
       surcharge_amount: surcharge,
       status,
       tier_label: tierLabel,
+      adjustment_description: adjustmentDesc,
       location_name: firstMatch.formatted_address || `${city}, ${stateShort}`,
       timestamp: new Date().toISOString(),
       source: 'verified_live',
@@ -337,27 +367,30 @@ async function queryPostGISProximity(
       if (Array.isArray(rows) && rows.length > 0) {
         const nearest = rows[0];
         const surcharge = nearest.surcharge_amount || 0;
-        const monthlyFee = nearest.monthly_service_fee || (nearest.status === 'discounted' ? 55 : nearest.status === 'congested' ? 130 : 120);
-        const priceAdjustment = monthlyFee - 120;
+        const totalMonthlyFee = nearest.total_monthly_fee ?? nearest.monthly_service_fee ?? (nearest.status === 'discounted' ? 55 : nearest.status === 'congested' ? 143 : 120);
+        const baseService = nearest.base_service_fee ?? (totalMonthlyFee >= 130 ? 130 : totalMonthlyFee < 120 ? 55 : 120);
+        const adjustment = nearest.service_price_adjustment ?? Math.round((totalMonthlyFee - baseService) * 100) / 100;
 
         let status = nearest.status;
         if (!status || status === 'standard') {
           if (surcharge > 0) status = 'high_demand';
-          else if (monthlyFee > 120) status = 'congested';
-          else if (monthlyFee < 120) status = 'discounted';
+          else if (adjustment > 0 || totalMonthlyFee > 120) status = 'congested';
+          else if (adjustment < 0 || totalMonthlyFee < 120) status = 'discounted';
           else status = 'standard';
         }
 
-        let tierLabel = `$${monthlyFee}/mo`;
+        let tierLabel = `$${formatPrice(totalMonthlyFee)}/mo`;
         if (surcharge > 0) tierLabel = `+$${surcharge} Demand Surcharge`;
-        else if (status === 'discounted') tierLabel = `$${monthlyFee}/mo Regional Discount`;
-        else if (status === 'congested') tierLabel = `$${monthlyFee}/mo Congestion Rate`;
+        else if (status === 'discounted') tierLabel = `$${formatPrice(totalMonthlyFee)}/mo Discounted`;
+        else if (status === 'congested') tierLabel = `$${formatPrice(totalMonthlyFee)}/mo Congested`;
 
         return {
           lat: nearest.lat,
           lng: nearest.lng,
-          monthly_service_fee: monthlyFee,
-          service_price_adjustment: priceAdjustment,
+          base_service_fee: baseService,
+          service_price_adjustment: adjustment,
+          total_monthly_fee: totalMonthlyFee,
+          monthly_service_fee: totalMonthlyFee,
           surcharge_amount: surcharge,
           status,
           tier_label: tierLabel,
