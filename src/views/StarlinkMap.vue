@@ -544,33 +544,51 @@ function loadLeafletScript(): Promise<void> {
 }
 
 async function fetchSurchargeData() {
+  // 1. Primary: Load verified points via Cloudflare Worker edge cache
+  const pointsUrl = workerApiUrl.value.replace(/\/api\/check-fee.*$/, '/api/points').replace(/\/check-fee.*$/, '/api/points');
   try {
-    const resp = await fetch(`${SUPABASE_URL}/rest/v1/starlink_surcharges?select=*&order=sampled_at.desc`, {
-      headers: {
-        'apikey': SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-      }
-    });
-
+    const resp = await fetch(pointsUrl);
     if (resp.ok) {
       const data = await resp.json();
       if (Array.isArray(data) && data.length > 0) {
         rawSurchargeData = data;
         supabaseOnline.value = true;
-      } else {
-        rawSurchargeData = [];
-        supabaseOnline.value = true;
+        computeStats();
+        renderMarkers();
+        return;
       }
-    } else {
-      rawSurchargeData = [];
-      supabaseOnline.value = false;
     }
   } catch (err) {
-    console.warn('Supabase fetch failed. Awaiting data ingestion.', err);
-    rawSurchargeData = [];
-    supabaseOnline.value = false;
+    console.warn('Worker /api/points fetch attempt failed:', err);
   }
 
+  // 2. Secondary: Direct Supabase fetch if valid anon key configured
+  if (SUPABASE_ANON_KEY && SUPABASE_ANON_KEY !== 'public-anon-key' && !SUPABASE_ANON_KEY.includes('...')) {
+    try {
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/starlink_surcharges?select=*&order=sampled_at.desc`, {
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+        }
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        if (Array.isArray(data) && data.length > 0) {
+          rawSurchargeData = data;
+          supabaseOnline.value = true;
+          computeStats();
+          renderMarkers();
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('Direct Supabase fetch fallback failed:', err);
+    }
+  }
+
+  rawSurchargeData = [];
+  supabaseOnline.value = true;
   computeStats();
   renderMarkers();
 }

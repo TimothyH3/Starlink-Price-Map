@@ -80,10 +80,26 @@ export default {
       );
     }
 
+    // Deliver all ingested nodes from Supabase to frontend
+    if (pathname === '/points' || pathname === '/api/points') {
+      const points = await fetchPointsFromSupabase(env);
+      return new Response(
+        JSON.stringify(points),
+        {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json',
+            'Cache-Control': 'public, max-age=60, s-maxage=300'
+          }
+        }
+      );
+    }
+
     // Match /check-fee or /api/check-fee
     if (pathname !== '/check-fee' && pathname !== '/api/check-fee') {
       return new Response(
-        JSON.stringify({ error: 'Endpoint not found. Use /api/check-fee?lat={lat}&lng={lng}' }),
+        JSON.stringify({ error: 'Endpoint not found. Use /api/check-fee?lat={lat}&lng={lng} or /api/points' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -112,13 +128,19 @@ export default {
 
     // Tier 1: Query Supabase PostGIS spatial cache (radius 25 km)
     let result: ServiceCostResult | null = null;
-    if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) {
-      result = await queryPostGISProximity(env, lat, lng, starlinkVerifyUrl);
+    const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || (env as any)['REDACTED'];
+    if (env.SUPABASE_URL && supabaseKey) {
+      result = await queryPostGISProximity(env, lat, lng, starlinkVerifyUrl, supabaseKey);
     }
 
     // Tier 2: If no PostGIS cache hit, attempt genuine Starlink live qualification
     if (!result) {
       result = await probeStarlinkLive(lat, lng, starlinkVerifyUrl);
+
+      // Tier 2b: Automatically save verified live result into Supabase in background
+      if (result && result.source === 'verified_live' && env.SUPABASE_URL && supabaseKey) {
+        ctx.waitUntil(saveToSupabase(env, result, supabaseKey));
+      }
     }
 
     // Tier 3: If live qualification unreachable, return honest unsampled status
@@ -339,10 +361,10 @@ async function queryPostGISProximity(
   env: Env,
   lat: number,
   lng: number,
-  starlinkVerifyUrl: string
+  starlinkVerifyUrl: string,
+  apiKey: string
 ): Promise<ServiceCostResult | null> {
   const rpcUrl = `${env.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/rpc/get_nearby_surcharge`;
-  const apiKey = env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!apiKey) return null;
 
@@ -408,4 +430,80 @@ async function queryPostGISProximity(
   }
 
   return null;
+}
+
+/**
+ * Saves a live-verified coordinate into Supabase PostGIS cache
+ */
+async function saveToSupabase(
+  env: Env,
+  result: ServiceCostResult,
+  apiKey: string
+): Promise<void> {
+  if (!env.SUPABASE_URL || !apiKey) return;
+
+  const url = `${env.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/starlink_surcharges`;
+  const geomWkt = `SRID=4326;POINT(${result.lng} ${result.lat})`;
+
+  const row = {
+    coordinates: geomWkt,
+    lat: result.lat,
+    lng: result.lng,
+    base_service_fee: result.base_service_fee ?? 120,
+    service_price_adjustment: result.service_price_adjustment ?? 0,
+    total_monthly_fee: result.total_monthly_fee ?? 120,
+    monthly_service_fee: result.total_monthly_fee ?? 120,
+    surcharge_amount: result.surcharge_amount ?? 0,
+    status: result.status,
+    sample_type: 'live_user_qualified',
+    location_name: result.location_name,
+    adjustment_description: result.adjustment_description || 'Service Price Adjustment',
+    sampled_at: result.timestamp || new Date().toISOString()
+  };
+
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'apikey': apiKey,
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify(row)
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.warn('Supabase upsert warning:', resp.status, errText);
+    }
+  } catch (err) {
+    console.error('Error saving to Supabase:', err);
+  }
+}
+
+/**
+ * Fetches all ingested surcharge & service cost nodes from Supabase
+ */
+async function fetchPointsFromSupabase(env: Env): Promise<any[]> {
+  const apiKey = env.SUPABASE_SERVICE_ROLE_KEY || (env as any)['REDACTED'];
+  if (!env.SUPABASE_URL || !apiKey) return [];
+
+  try {
+    const url = `${env.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/starlink_surcharges?select=*&order=sampled_at.desc`;
+    const resp = await fetch(url, {
+      headers: {
+        'apikey': apiKey,
+        'Authorization': `Bearer ${apiKey}`
+      }
+    });
+
+    if (resp.ok) {
+      const data = await resp.json();
+      return Array.isArray(data) ? data : [];
+    }
+  } catch (err) {
+    console.error('Failed to fetch points from Supabase:', err);
+  }
+  return [];
 }
