@@ -126,10 +126,12 @@ export default {
 
     const starlinkVerifyUrl = `https://www.starlink.com/residential?serviceAddress=${lat.toFixed(4)},${lng.toFixed(4)}`;
 
-    // Tier 1: Query Supabase PostGIS spatial cache (radius 25 km)
+    const forceLive = url.searchParams.get('force') === 'true' || url.searchParams.get('refresh') === 'true';
+
+    // Tier 1: Query Supabase PostGIS spatial cache (radius 25 km) unless forced
     let result: ServiceCostResult | null = null;
     const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || (env as any)['REDACTED'];
-    if (env.SUPABASE_URL && supabaseKey) {
+    if (!forceLive && env.SUPABASE_URL && supabaseKey) {
       result = await queryPostGISProximity(env, lat, lng, starlinkVerifyUrl, supabaseKey);
     }
 
@@ -303,18 +305,22 @@ async function probeStarlinkLive(
     const totalMonthlyFee = Math.round((baseServiceFee + servicePriceAdjustment) * 100) / 100;
 
     let status: 'discounted' | 'standard' | 'congested' | 'high_demand' | 'sold_out' = 'standard';
-    let tierLabel = `$${formatPrice(totalMonthlyFee)}/mo Standard Plan`;
+    let tierLabel = `$${formatPrice(totalMonthlyFee)}/mo Standard Base Rate`;
 
+    // Monthly service tiers: Green: $55-85, Blue: $85-130, Orange: $130-170, Red: $170+, Purple: unavailable
     if (deposit > 0) {
       status = 'sold_out';
-      tierLabel = 'Sold Out / Waitlist';
-    } else if (surcharge > 0) {
+      tierLabel = 'Unavailable (Sold Out)';
+    } else if (totalMonthlyFee >= 170) {
       status = 'high_demand';
-      tierLabel = `+$${surcharge} Demand Surcharge`;
-    } else if (servicePriceAdjustment > 0 || totalMonthlyFee > 120) {
+      tierLabel = `$${formatPrice(totalMonthlyFee)}/mo (High Demand)`;
+    } else if (totalMonthlyFee >= 130) {
       status = 'congested';
       tierLabel = `$${formatPrice(totalMonthlyFee)}/mo (Congested)`;
-    } else if (servicePriceAdjustment < 0 || totalMonthlyFee < 120) {
+    } else if (totalMonthlyFee >= 85) {
+      status = 'standard';
+      tierLabel = `$${formatPrice(totalMonthlyFee)}/mo (Standard)`;
+    } else {
       status = 'discounted';
       tierLabel = `$${formatPrice(totalMonthlyFee)}/mo (Discounted)`;
     }
@@ -433,7 +439,7 @@ async function queryPostGISProximity(
 }
 
 /**
- * Saves a live-verified coordinate into Supabase PostGIS cache
+ * Saves a live-verified coordinate into Supabase PostGIS cache using stored procedure
  */
 async function saveToSupabase(
   env: Env,
@@ -442,35 +448,29 @@ async function saveToSupabase(
 ): Promise<void> {
   if (!env.SUPABASE_URL || !apiKey) return;
 
-  const url = `${env.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/starlink_surcharges`;
-  const geomWkt = `SRID=4326;POINT(${result.lng} ${result.lat})`;
-
-  const row = {
-    coordinates: geomWkt,
-    lat: result.lat,
-    lng: result.lng,
-    base_service_fee: result.base_service_fee ?? 120,
-    service_price_adjustment: result.service_price_adjustment ?? 0,
-    total_monthly_fee: result.total_monthly_fee ?? 120,
-    monthly_service_fee: result.total_monthly_fee ?? 120,
-    surcharge_amount: result.surcharge_amount ?? 0,
-    status: result.status,
-    sample_type: 'live_user_qualified',
-    location_name: result.location_name,
-    adjustment_description: result.adjustment_description || 'Service Price Adjustment',
-    sampled_at: result.timestamp || new Date().toISOString()
+  const rpcUrl = `${env.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/rpc/upsert_starlink_surcharge`;
+  const payload = {
+    p_lat: result.lat,
+    p_lng: result.lng,
+    p_surcharge_amount: result.surcharge_amount ?? 0,
+    p_status: result.status,
+    p_sample_type: 'live_user_qualified',
+    p_location_name: result.location_name,
+    p_base_service_fee: result.base_service_fee ?? 120,
+    p_service_price_adjustment: result.service_price_adjustment ?? 0,
+    p_total_monthly_fee: result.total_monthly_fee ?? 120,
+    p_adjustment_description: result.adjustment_description || 'Service Price Adjustment'
   };
 
   try {
-    const resp = await fetch(url, {
+    const resp = await fetch(rpcUrl, {
       method: 'POST',
       headers: {
         'apikey': apiKey,
         'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates'
+        'Content-Type': 'application/json'
       },
-      body: JSON.stringify(row)
+      body: JSON.stringify(payload)
     });
 
     if (!resp.ok) {

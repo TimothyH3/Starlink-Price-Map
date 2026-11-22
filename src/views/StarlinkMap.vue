@@ -83,31 +83,31 @@
           <label class="legend-item tier-green" :class="{ disabled: !tierFilters.tierDiscount }">
             <input type="checkbox" v-model="tierFilters.tierDiscount" @change="applyTierFilters" />
             <span class="legend-swatch swatch-green"></span>
-            <span class="legend-label">$55/mo Regional Discount</span>
+            <span class="legend-label">$55–$85 Cheapest / Discount</span>
             <span class="tier-count">({{ tierCounts.tierDiscount }})</span>
           </label>
           <label class="legend-item tier-cyan" :class="{ disabled: !tierFilters.tierStandard }">
             <input type="checkbox" v-model="tierFilters.tierStandard" @change="applyTierFilters" />
             <span class="legend-swatch swatch-cyan"></span>
-            <span class="legend-label">$120/mo Standard Plan</span>
+            <span class="legend-label">$85–$130 Standard Base Rate</span>
             <span class="tier-count">({{ tierCounts.tierStandard }})</span>
           </label>
           <label class="legend-item tier-orange" :class="{ disabled: !tierFilters.tierCongested }">
             <input type="checkbox" v-model="tierFilters.tierCongested" @change="applyTierFilters" />
             <span class="legend-swatch swatch-orange"></span>
-            <span class="legend-label">$130+/mo Congestion Rate</span>
+            <span class="legend-label">$130–$170 Congestion Adjusted</span>
             <span class="tier-count">({{ tierCounts.tierCongested }})</span>
           </label>
           <label class="legend-item tier-red" :class="{ disabled: !tierFilters.tierSurcharge }">
             <input type="checkbox" v-model="tierFilters.tierSurcharge" @change="applyTierFilters" />
             <span class="legend-swatch swatch-red"></span>
-            <span class="legend-label">+$100+ Demand Surcharge</span>
+            <span class="legend-label">$170+ High Congestion Cost</span>
             <span class="tier-count">({{ tierCounts.tierSurcharge }})</span>
           </label>
           <label class="legend-item tier-purple" :class="{ disabled: !tierFilters.tierSoldOut }">
             <input type="checkbox" v-model="tierFilters.tierSoldOut" @change="applyTierFilters" />
             <span class="legend-swatch swatch-purple"></span>
-            <span class="legend-label">Sold Out / Waitlist</span>
+            <span class="legend-label">Unavailable (Sold Out)</span>
             <span class="tier-count">({{ tierCounts.tierSoldOut }})</span>
           </label>
         </div>
@@ -386,6 +386,58 @@ function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lo
   return R * c;
 }
 
+// Pointy-topped regular hexagonal honeycomb grid snapping (Zero overlap guaranteed)
+// Circumradius R = 12.5 km. Column spacing = sqrt(3)*R ~= 21.65 km, Row spacing = 1.5*R = 18.75 km.
+const HEX_RADIUS_KM = 12.5;
+const REF_LAT = 38.0;
+const REF_LNG = -97.0;
+
+function snapToHexGrid(lat: number, lng: number, radiusKm: number = HEX_RADIUS_KM) {
+  const kmPerLat = 111.132;
+  const kmPerLng = 111.320 * Math.cos(REF_LAT * Math.PI / 180);
+  const x = (lng - REF_LNG) * kmPerLng;
+  const y = (lat - REF_LAT) * kmPerLat;
+  const R = radiusKm;
+
+  const r = (2.0 / 3.0) * (y / R);
+  const q = (Math.sqrt(3) / 3.0) * (x / R) - r / 2.0;
+
+  let xc = q;
+  let zc = r;
+  let yc = -xc - zc;
+
+  let rx = Math.round(xc);
+  let ry = Math.round(yc);
+  let rz = Math.round(zc);
+
+  const xDiff = Math.abs(rx - xc);
+  const yDiff = Math.abs(ry - yc);
+  const zDiff = Math.abs(rz - zc);
+
+  if (xDiff > yDiff && xDiff > zDiff) {
+    rx = -ry - rz;
+  } else if (yDiff > zDiff) {
+    ry = -rx - rz;
+  } else {
+    rz = -rx - ry;
+  }
+
+  const qSnap = rx;
+  const rSnap = rz;
+
+  const xCenter = R * Math.sqrt(3) * (qSnap + rSnap / 2.0);
+  const yCenter = R * (3.0 / 2.0) * rSnap;
+
+  const centerLat = REF_LAT + yCenter / kmPerLat;
+  const centerLng = REF_LNG + xCenter / kmPerLng;
+
+  return {
+    centerLat: Math.round(centerLat * 10000) / 10000,
+    centerLng: Math.round(centerLng * 10000) / 10000,
+    cellKey: `${qSnap}_${rSnap}`
+  };
+}
+
 function getPointPricing(rec: SurchargeRecord) {
   const surcharge = rec.surcharge_amount || 0;
   const isUnsampled = !!rec.isUnsampled || rec.status === 'unsampled' || 
@@ -393,10 +445,10 @@ function getPointPricing(rec: SurchargeRecord) {
 
   if (isUnsampled) {
     return {
-      base: null,
+      base: 120,
       adjustment: 0,
-      total: null,
-      surcharge: null,
+      total: 120,
+      surcharge: 0,
       isUnsampled: true
     };
   }
@@ -404,6 +456,12 @@ function getPointPricing(rec: SurchargeRecord) {
   let base = rec.base_service_fee;
   let adj = rec.service_price_adjustment;
   let total = rec.total_monthly_fee ?? rec.monthly_service_fee;
+
+  // Unprobed priority hotspot seeds default to standard $120/mo baseline rate so they do not falsely appear orange
+  if (rec.sample_type === 'hotspot_priority' && !rec.isLiveVerified && adj === 0 && (total === 130 || total === null)) {
+    total = 120;
+    base = 120;
+  }
 
   if (adj !== undefined && adj !== null) {
     adj = Number(adj);
@@ -419,12 +477,12 @@ function getPointPricing(rec: SurchargeRecord) {
     if (total !== undefined && total !== null) {
       total = Number(total);
       if (base === undefined || base === null) {
-        base = total >= 130 ? 130 : total < 120 ? 55 : 120;
+        base = total >= 170 ? 170 : total >= 130 ? 130 : total < 85 ? 55 : 120;
       }
       adj = Math.round((total - Number(base)) * 100) / 100;
     } else {
-      total = rec.status === 'discounted' ? 38.5 : rec.status === 'congested' ? 143 : 120;
-      base = total >= 130 ? 130 : total < 120 ? 55 : 120;
+      total = rec.status === 'discounted' ? 55 : rec.status === 'congested' ? 143 : 120;
+      base = total >= 170 ? 170 : total >= 130 ? 130 : total < 85 ? 55 : 120;
       adj = Math.round((total - base) * 100) / 100;
     }
   }
@@ -442,22 +500,26 @@ function isPending(rec: SurchargeRecord): boolean {
   return !!rec.isUnsampled || rec.status === 'unsampled' || (rec.monthly_service_fee === null && rec.surcharge_amount === null);
 }
 
+// Monthly service tiers matching total cheapest monthly cost:
+// Green: $55-85, Blue: $85-130, Orange: $130-170, Red: $170+, Purple: Unavailable
 function getTierColor(node: SurchargeRecord): string {
-  if (node.status === 'sold_out') return '#c084fc';
+  if (node.status === 'sold_out') return '#c084fc'; // Purple: unavailable
   const pricing = getPointPricing(node);
-  if (pricing.surcharge > 0) return '#ef4444';
-  if (pricing.adjustment > 0 || (pricing.total !== null && pricing.total > 120)) return '#f97316';
-  if (pricing.adjustment < 0 || (pricing.total !== null && pricing.total < 120)) return '#10b981';
-  return '#38bdf8';
+  const cost = pricing.total !== null ? pricing.total : 120;
+  if (cost < 85) return '#10b981';  // Green: $55 - $85
+  if (cost < 130) return '#38bdf8'; // Blue: $85 - $130
+  if (cost < 170) return '#f97316'; // Orange: $130 - $170
+  return '#ef4444';                 // Red: $170+
 }
 
 function getTierKey(node: SurchargeRecord): string {
-  if (node.status === 'sold_out') return 'sold_out';
+  if (node.status === 'sold_out') return 'sold_out'; // Purple: unavailable
   const pricing = getPointPricing(node);
-  if (pricing.surcharge > 0) return 'high_demand';
-  if (pricing.adjustment > 0 || (pricing.total !== null && pricing.total > 120)) return 'congested';
-  if (pricing.adjustment < 0 || (pricing.total !== null && pricing.total < 120)) return 'discounted';
-  return 'standard';
+  const cost = pricing.total !== null ? pricing.total : 120;
+  if (cost < 85) return 'discounted';  // Green: $55 - $85
+  if (cost < 130) return 'standard';   // Blue: $85 - $130
+  if (cost < 170) return 'congested';  // Orange: $130 - $170
+  return 'high_demand';                // Red: $170+
 }
 
 function getHexagonLatLngs(centerLat: number, centerLng: number, radiusKm: number = 12.5): [number, number][] {
@@ -482,38 +544,43 @@ function ensureSvgGradients() {
   const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
   defs.innerHTML = `
     <radialGradient id="hex-aura-congested" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#f97316" stop-opacity="0.55" />
-      <stop offset="25%" stop-color="#f97316" stop-opacity="0.38" />
-      <stop offset="55%" stop-color="#f97316" stop-opacity="0.18" />
-      <stop offset="80%" stop-color="#f97316" stop-opacity="0.05" />
+      <stop offset="0%" stop-color="#f97316" stop-opacity="0.90" />
+      <stop offset="20%" stop-color="#f97316" stop-opacity="0.70" />
+      <stop offset="45%" stop-color="#f97316" stop-opacity="0.45" />
+      <stop offset="70%" stop-color="#f97316" stop-opacity="0.20" />
+      <stop offset="90%" stop-color="#f97316" stop-opacity="0.06" />
       <stop offset="100%" stop-color="#f97316" stop-opacity="0" />
     </radialGradient>
     <radialGradient id="hex-aura-high_demand" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#ef4444" stop-opacity="0.60" />
-      <stop offset="25%" stop-color="#ef4444" stop-opacity="0.42" />
-      <stop offset="55%" stop-color="#ef4444" stop-opacity="0.20" />
-      <stop offset="80%" stop-color="#ef4444" stop-opacity="0.06" />
+      <stop offset="0%" stop-color="#ef4444" stop-opacity="0.92" />
+      <stop offset="20%" stop-color="#ef4444" stop-opacity="0.72" />
+      <stop offset="45%" stop-color="#ef4444" stop-opacity="0.46" />
+      <stop offset="70%" stop-color="#ef4444" stop-opacity="0.22" />
+      <stop offset="90%" stop-color="#ef4444" stop-opacity="0.07" />
       <stop offset="100%" stop-color="#ef4444" stop-opacity="0" />
     </radialGradient>
     <radialGradient id="hex-aura-standard" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.50" />
-      <stop offset="25%" stop-color="#38bdf8" stop-opacity="0.32" />
-      <stop offset="55%" stop-color="#38bdf8" stop-opacity="0.15" />
-      <stop offset="80%" stop-color="#38bdf8" stop-opacity="0.04" />
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.88" />
+      <stop offset="20%" stop-color="#38bdf8" stop-opacity="0.68" />
+      <stop offset="45%" stop-color="#38bdf8" stop-opacity="0.42" />
+      <stop offset="70%" stop-color="#38bdf8" stop-opacity="0.18" />
+      <stop offset="90%" stop-color="#38bdf8" stop-opacity="0.05" />
       <stop offset="100%" stop-color="#38bdf8" stop-opacity="0" />
     </radialGradient>
     <radialGradient id="hex-aura-discounted" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#10b981" stop-opacity="0.55" />
-      <stop offset="25%" stop-color="#10b981" stop-opacity="0.36" />
-      <stop offset="55%" stop-color="#10b981" stop-opacity="0.16" />
-      <stop offset="80%" stop-color="#10b981" stop-opacity="0.05" />
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.90" />
+      <stop offset="20%" stop-color="#10b981" stop-opacity="0.70" />
+      <stop offset="45%" stop-color="#10b981" stop-opacity="0.44" />
+      <stop offset="70%" stop-color="#10b981" stop-opacity="0.20" />
+      <stop offset="90%" stop-color="#10b981" stop-opacity="0.06" />
       <stop offset="100%" stop-color="#10b981" stop-opacity="0" />
     </radialGradient>
     <radialGradient id="hex-aura-sold_out" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#c084fc" stop-opacity="0.50" />
-      <stop offset="25%" stop-color="#c084fc" stop-opacity="0.32" />
-      <stop offset="55%" stop-color="#c084fc" stop-opacity="0.15" />
-      <stop offset="80%" stop-color="#c084fc" stop-opacity="0.04" />
+      <stop offset="0%" stop-color="#c084fc" stop-opacity="0.88" />
+      <stop offset="20%" stop-color="#c084fc" stop-opacity="0.66" />
+      <stop offset="45%" stop-color="#c084fc" stop-opacity="0.40" />
+      <stop offset="70%" stop-color="#c084fc" stop-opacity="0.18" />
+      <stop offset="90%" stop-color="#c084fc" stop-opacity="0.05" />
       <stop offset="100%" stop-color="#c084fc" stop-opacity="0" />
     </radialGradient>
   `;
@@ -522,22 +589,24 @@ function ensureSvgGradients() {
 
 function getBannerClass(rec: SurchargeRecord): string {
   if (rec.status === 'sold_out') return 'banner-sold_out';
-  if ((rec.surcharge_amount || 0) > 0) return 'banner-high_demand';
   const pricing = getPointPricing(rec);
-  if (pricing.adjustment > 0 || (pricing.total !== null && pricing.total > 120)) return 'banner-congested';
-  if (pricing.adjustment < 0 || (pricing.total !== null && pricing.total < 120)) return 'banner-discount';
   if (isPending(rec)) return 'banner-unsampled';
-  return 'banner-standard';
+  const cost = pricing.total !== null ? pricing.total : 120;
+  if (cost >= 170) return 'banner-high_demand';
+  if (cost >= 130) return 'banner-congested';
+  if (cost >= 85) return 'banner-standard';
+  return 'banner-discount';
 }
 
 function getStatusTitle(rec: SurchargeRecord): string {
-  if (rec.status === 'sold_out') return 'SOLD OUT / WAITLIST';
-  if ((rec.surcharge_amount || 0) > 0) return 'CONGESTION SURCHARGE ZONE';
+  if (rec.status === 'sold_out') return 'UNAVAILABLE (SOLD OUT)';
   const pricing = getPointPricing(rec);
-  if (pricing.adjustment > 0) return 'CONGESTION ADJUSTMENT ACTIVE';
-  if (pricing.adjustment < 0) return 'REGIONAL DISCOUNT ACTIVE';
   if (isPending(rec)) return 'UNSAMPLED CELL';
-  return 'STANDARD RESIDENTIAL PLAN';
+  const cost = pricing.total !== null ? pricing.total : 120;
+  if (cost >= 170) return '$170+ HIGH CONGESTION COST';
+  if (cost >= 130) return '$130–$170 CONGESTION ADJUSTED';
+  if (cost >= 85) return '$85–$130 STANDARD BASE RATE';
+  return '$55–$85 CHEAPEST / DISCOUNTED';
 }
 
 function getAdjustmentText(rec: SurchargeRecord): string {
@@ -688,11 +757,15 @@ function computeStats() {
       sumMonthly += pricing.total;
     }
 
-    if (isSold) soldCount++;
-    if (s > 0) surchCount++;
-    if (!isSold && (pricing.adjustment < 0 || pricing.total < 120)) discCount++;
-    else if (!isSold && pricing.adjustment === 0 && pricing.total === 120) stdCount++;
-    else if (!isSold && (pricing.adjustment > 0 || pricing.total > 120)) congCount++;
+    if (isSold) {
+      soldCount++;
+    } else {
+      const cost = pricing.total !== null ? pricing.total : 120;
+      if (cost < 85) discCount++;
+      else if (cost < 130) stdCount++;
+      else if (cost < 170) congCount++;
+      else surchCount++; // Red: $170+
+    }
   }
 
   tierCounts.tierDiscount = discCount;
@@ -712,23 +785,42 @@ function renderMarkers() {
 
   const activeNodes = rawSurchargeData.filter(node => {
     const pricing = getPointPricing(node);
-    const s = pricing.surcharge || 0;
-    const fee = pricing.total;
+    const fee = pricing.total !== null ? pricing.total : 120;
     const isSold = node.status === 'sold_out';
 
     if (isSold && !tierFilters.tierSoldOut) return false;
-    if (s > 0 && !tierFilters.tierSurcharge) return false;
-    if (!isSold && s === 0 && (pricing.adjustment < 0 || fee < 120) && !tierFilters.tierDiscount) return false;
-    if (!isSold && s === 0 && pricing.adjustment === 0 && fee === 120 && !tierFilters.tierStandard) return false;
-    if (!isSold && s === 0 && (pricing.adjustment > 0 || fee > 120) && !tierFilters.tierCongested) return false;
+    if (!isSold) {
+      if (fee < 85 && !tierFilters.tierDiscount) return false;
+      if (fee >= 85 && fee < 130 && !tierFilters.tierStandard) return false;
+      if (fee >= 130 && fee < 170 && !tierFilters.tierCongested) return false;
+      if (fee >= 170 && !tierFilters.tierSurcharge) return false;
+    }
     return true;
   });
 
-  // Pass 1: Render outer fading gradient auras spanning 65 km surrounding area
+  // Deduplicate points by honeycomb lattice to guarantee ZERO overlapping hexes
+  const cellMap = new Map<string, any>();
   for (const node of activeNodes) {
-    const tierKey = getTierKey(node);
-    const aura = L.circle([node.lat, node.lng], {
-      radius: 65000, // 65 km real-world geographic ground radius
+    const snapped = snapToHexGrid(node.lat, node.lng);
+    const key = snapped.cellKey;
+    if (!cellMap.has(key)) {
+      cellMap.set(key, { ...node, centerLat: snapped.centerLat, centerLng: snapped.centerLng, cellKey: key });
+    } else {
+      const existing = cellMap.get(key)!;
+      const existingTime = new Date(existing.sampled_at || 0).getTime();
+      const newTime = new Date(node.sampled_at || 0).getTime();
+      if (newTime > existingTime || node.isLiveVerified) {
+        cellMap.set(key, { ...node, centerLat: snapped.centerLat, centerLng: snapped.centerLng, cellKey: key });
+      }
+    }
+  }
+  const uniqueCells = Array.from(cellMap.values());
+
+  // Pass 1: Render outer high-intensity fading gradient auras spanning 125 km surrounding area
+  for (const cell of uniqueCells) {
+    const tierKey = getTierKey(cell);
+    const aura = L.circle([cell.centerLat, cell.centerLng], {
+      radius: 125000, // 125 km real-world geographic ground radius
       stroke: false,
       interactive: false,
       className: `starlink-hex-aura starlink-aura-${tierKey}`
@@ -741,55 +833,58 @@ function renderMarkers() {
 
   // Pass 2: Render crisp central Starlink cell hexagons (12.5 km circumradius matching Starlink cells)
   let count = 0;
-  for (const node of activeNodes) {
+  for (const cell of uniqueCells) {
     count++;
-    const pricing = getPointPricing(node);
+    const pricing = getPointPricing(cell);
     const s = pricing.surcharge || 0;
-    const fee = pricing.total;
-    const isSold = node.status === 'sold_out';
-    const color = getTierColor(node);
+    const fee = pricing.total !== null ? pricing.total : 120;
+    const isSold = cell.status === 'sold_out';
+    const color = getTierColor(cell);
 
-    const hexCoords = getHexagonLatLngs(node.lat, node.lng, 12.5);
+    const hexCoords = getHexagonLatLngs(cell.centerLat, cell.centerLng, 12.5);
     const hex = L.polygon(hexCoords, {
       color: '#ffffff',
-      weight: 1.8,
-      opacity: 0.95,
+      weight: 2.2,
+      opacity: 0.98,
       fillColor: color,
-      fillOpacity: 0.72,
+      fillOpacity: 0.88,
       className: 'starlink-cell-hex'
     });
 
-    const tip = isSold
-      ? 'Waitlist / Capacity Sold Out'
-      : s > 0
-        ? `${formatMoney(fee)}/mo (+${formatMoney(s)} Upfront Surcharge)`
-        : pricing.adjustment > 0
-          ? `${formatMoney(fee)}/mo (${formatMoney(pricing.base)} base + ${formatMoney(pricing.adjustment)} Congestion)`
-          : pricing.adjustment < 0
-            ? `${formatMoney(fee)}/mo (${formatMoney(pricing.base)} base - ${formatMoney(Math.abs(pricing.adjustment))} Discount)`
-            : `${formatMoney(fee)}/mo Standard Base Plan`;
+    let tip = '';
+    if (isSold) {
+      tip = 'Unavailable (Capacity Sold Out)';
+    } else if (fee >= 170) {
+      tip = `${formatMoney(fee)}/mo (Red: $170+ High Cost)` + (s > 0 ? ` [+$${s} Surcharge]` : '');
+    } else if (fee >= 130) {
+      tip = `${formatMoney(fee)}/mo (Orange: $130–$170 Congestion Adjusted)` + (s > 0 ? ` [+$${s} Surcharge]` : '');
+    } else if (fee >= 85) {
+      tip = `${formatMoney(fee)}/mo (Blue: $85–$130 Standard Rate)`;
+    } else {
+      tip = `${formatMoney(fee)}/mo (Green: $55–$85 Cheapest / Discount)`;
+    }
 
     hex.bindTooltip(tip, { className: 'starlink-hex-tooltip', direction: 'top', offset: [0, -10] });
 
     hex.on('mouseover', function (this: any) {
       this.setStyle({
-        weight: 3.0,
-        color: '#38bdf8',
-        fillOpacity: 0.94
+        weight: 3.2,
+        color: '#ffffff',
+        fillOpacity: 0.96
       });
     });
 
     hex.on('mouseout', function (this: any) {
       this.setStyle({
-        weight: 1.8,
+        weight: 2.2,
         color: '#ffffff',
-        fillOpacity: 0.72
+        fillOpacity: 0.88
       });
     });
 
     hex.on('click', (e: any) => {
       L.DomEvent.stopPropagation(e);
-      inspectPoint(node);
+      inspectPoint(cell);
     });
 
     markersLayerGroup.addLayer(hex);
@@ -880,11 +975,11 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
   isCheckingLive.value = true;
   liveQueryError.value = null;
 
-  const targetUrl = `${workerApiUrl.value}?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}`;
+  const targetUrl = `${workerApiUrl.value}?lat=${lat.toFixed(4)}&lng=${lng.toFixed(4)}&force=true`;
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     const resp = await fetch(targetUrl, { signal: controller.signal });
     clearTimeout(timeoutId);
@@ -903,21 +998,25 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
           status: result.status,
           sampled_at: result.timestamp || new Date().toISOString(),
           location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
-          proximity_km: result.distance_km || 0,
-          isLiveVerified: result.source === 'verified_live',
+          proximity_km: 0,
+          isLiveVerified: true,
           isUnsampled: false
         };
         inspectedLocation.value = updatedRecord;
 
+        const snapped = snapToHexGrid(lat, lng);
         const existingIdx = rawSurchargeData.findIndex(
-          p => Math.abs(p.lat - updatedRecord.lat) < 0.001 && Math.abs(p.lng - updatedRecord.lng) < 0.001
+          p => {
+            const s = snapToHexGrid(p.lat, p.lng);
+            return s.cellKey === snapped.cellKey || calculateHaversineDistance(p.lat, p.lng, lat, lng) < 22;
+          }
         );
         if (existingIdx >= 0) {
           rawSurchargeData[existingIdx] = updatedRecord;
         } else {
           rawSurchargeData.unshift(updatedRecord);
         }
-        computeStats();
+        calculateStats();
         renderMarkers();
       } else {
         inspectedLocation.value = {
@@ -927,16 +1026,6 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
           service_price_adjustment: 0,
           total_monthly_fee: null,
           monthly_service_fee: null,
-          surcharge_amount: result.surcharge_amount,
-          status: result.status || 'unsampled',
-          sampled_at: result.timestamp || new Date().toISOString(),
-          location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
-          isUnsampled: true,
-          proximity_km: 0
-        };
-      }
-          lng: result.lng,
-          monthly_service_fee: result.monthly_service_fee,
           surcharge_amount: result.surcharge_amount,
           status: result.status || 'unsampled',
           sampled_at: result.timestamp || new Date().toISOString(),
