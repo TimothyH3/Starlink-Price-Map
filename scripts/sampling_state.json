@@ -1,14 +1,89 @@
 {
-  "current_week_index": 45,
-  "blanket_cursor": 1,
+  "current_week_index": 47,
+  "blanket_cursor": 0,
   "known_hotspots": [
     {
       "name": "Asheville Blue Ridge, NC",
       "lat": 35.5951,
       "lng": -82.5515,
       "last_surcharge": 0,
+      "consecutive_zeros": 0,
+      "last_checked": "2026-11-11T22:41:42.471704+00:00",
+      "last_monthly_fee": 130
+    },
+    {
+      "name": "Gatlinburg Great Smoky Mtns, TN",
+      "lat": 35.7143,
+      "lng": -83.5102,
+      "last_surcharge": 0,
       "consecutive_zeros": 1,
-      "last_checked": "2026-11-07T15:03:05.671164+00:00"
+      "last_checked": "2026-11-07T23:37:59.450770+00:00"
+    },
+    {
+      "name": "Aspen Roaring Fork, CO",
+      "lat": 39.1911,
+      "lng": -106.837,
+      "last_surcharge": 0,
+      "consecutive_zeros": 1,
+      "last_checked": "2026-11-08T13:20:54.019210+00:00"
+    },
+    {
+      "name": "Kalispell Flathead Basin, MT",
+      "lat": 48.192,
+      "lng": -114.3553,
+      "last_surcharge": 0,
+      "consecutive_zeros": 1,
+      "last_checked": "2026-11-08T22:52:32.426498+00:00"
+    },
+    {
+      "name": "Bend Deschutes Corridor, OR",
+      "lat": 44.0582,
+      "lng": -121.3153,
+      "last_surcharge": 0,
+      "consecutive_zeros": 1,
+      "last_checked": "2026-11-09T11:27:18.939748+00:00"
+    },
+    {
+      "name": "Flagstaff Coconino, AZ",
+      "lat": 35.1983,
+      "lng": -111.6513,
+      "last_surcharge": 0,
+      "consecutive_zeros": 1,
+      "last_checked": "2026-11-10T04:37:51.997014+00:00"
+    },
+    {
+      "name": "Show Low White Mtns, AZ",
+      "lat": 34.2542,
+      "lng": -110.0831,
+      "last_surcharge": 0,
+      "consecutive_zeros": 1,
+      "last_checked": "2026-11-10T20:49:04.149489+00:00"
+    },
+    {
+      "name": "Minocqua Northwoods, WI",
+      "lat": 45.8944,
+      "lng": -89.6886,
+      "last_surcharge": 0,
+      "consecutive_zeros": 1,
+      "last_checked": "2026-11-11T07:45:32.617059+00:00"
+    },
+    {
+      "name": "GPQF+8H South Beach, FL, USA",
+      "lat": 27.5383,
+      "lng": -80.2761,
+      "last_surcharge": 0,
+      "last_monthly_fee": 130.0,
+      "consecutive_zeros": 0,
+      "last_checked": "2026-11-14T22:58:22.055913+00:00"
+    },
+    {
+      "name": "76QWCJ7H+QJ",
+      "lat": 25.4144,
+      "lng": -81.3709,
+      "last_surcharge": 0,
+      "last_monthly_fee": 130.0,
+      "consecutive_zeros": 0,
+      "last_checked": "2026-11-17T03:50:43.846398+00:00"
     },
     {
       "name": "Boone Watauga High Country, NC",
@@ -18,51 +93,79 @@
       "consecutive_zeros": 0
     },
     {
-      "name": "Gatlinburg Great Smoky Mtns, TN",
-      "lat": 35.7143,
-      "lng": -83.5102,
+      "name": "Chattanooga Cumberland Plateau, TN",
+      "lat": 35.0456,
+      "lng": -85.3097,
       "last_surcharge": 0,
       "consecutive_zeros": 0
     },
     {
-      "name": "Truckee Lake Tahoe Basin, CA",
-      "lat": 39.328,
-      "lng": -120.1278,
+      "name": "Knoxville Ridge Corridor, TN",
+      "lat": 36.0104,
+      "lng": -84.388,
       "last_surcharge": 0,
       "consecutive_zeros": 0
     },
     {
-      "name": "Aspen Roaring Fork, CO",
-      "lat": 39.1911,
-      "lng": -106.837,
+      "name": "Dahlonega North GA Mtns, GA",
+      "lat": 34.5262,
+      "lng": -84.0713,
       "last_surcharge": 0,
       "consecutive_zeros": 0
     },
     {
-      "name": "Jackson Hole Teton, WY",
-      "lat": 43.4799,
-      "lng": -110.7624,
+      "name": "Hazard Eastern Coalfields, KY",
+      "lat": 37.2487,
+      "lng": -83.4488,
       "last_surcharge": 0,
       "consecutive_zeros": 0
     },
     {
-      "name": "Kalispell Flathead Basin, MT",
-      "lat": 48.192,
-      "lng": -114.3553,
+      "name": "Charleston Kanawha Valley, WV",
+      "lat": 38.3498,
+      "lng": -81.6326,
       "last_surcharge": 0,
       "consecutive_zeros": 0
     },
     {
-      "name": "Bozeman Gallatin Valley, MT",
-      "lat": 45.677,
-      "lng": -111.0429,
+      "name": "Roanoke Blue Ridge Valley, VA",
+      "lat": 37.271,
+      "lng": -79.9414,
       "last_surcharge": 0,
       "consecutive_zeros": 0
     },
     {
-      "name": "Bend Deschutes Corridor, OR",
-      "lat": 44.0582,
-      "lng": -121.3153,
+      "name": "Shenandoah Valley, VA",
+      "lat": 38.4496,
+      "lng": -78.8689,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Seattle Puget Sound, WA",
+      "lat": 47.6062,
+      "lng": -122.3321,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Spokane Inland Empire, WA",
+      "lat": 47.6588,
+      "lng": -117.426,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Eugene Willamette Valley, OR",
+      "lat": 44.0521,
+      "lng": -123.0868,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Boise Treasure Valley, ID",
+      "lat": 43.615,
+      "lng": -116.2023,
       "last_surcharge": 0,
       "consecutive_zeros": 0
     },
@@ -74,9 +177,51 @@
       "consecutive_zeros": 0
     },
     {
-      "name": "Flagstaff Coconino, AZ",
-      "lat": 35.1983,
-      "lng": -111.6513,
+      "name": "Bozeman Gallatin Valley, MT",
+      "lat": 45.677,
+      "lng": -111.0429,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Missoula Clark Fork, MT",
+      "lat": 46.8721,
+      "lng": -114.0076,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Jackson Hole Teton, WY",
+      "lat": 43.4799,
+      "lng": -110.7624,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Wasatch Front Salt Lake, UT",
+      "lat": 40.7608,
+      "lng": -111.891,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "St. George Red Rock, UT",
+      "lat": 37.1041,
+      "lng": -113.5684,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Durango San Juan, CO",
+      "lat": 37.2753,
+      "lng": -107.8801,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Denver Front Range, CO",
+      "lat": 39.7392,
+      "lng": -104.9903,
       "last_surcharge": 0,
       "consecutive_zeros": 0
     },
@@ -88,9 +233,65 @@
       "consecutive_zeros": 0
     },
     {
-      "name": "Show Low White Mtns, AZ",
-      "lat": 34.2542,
-      "lng": -110.0831,
+      "name": "Santa Fe Foothills, NM",
+      "lat": 35.687,
+      "lng": -105.9378,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Taos Enchanted Circle, NM",
+      "lat": 36.4072,
+      "lng": -105.5734,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Truckee Lake Tahoe Basin, CA",
+      "lat": 39.328,
+      "lng": -120.1278,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Mammoth Lakes Eastern Sierra, CA",
+      "lat": 37.6485,
+      "lng": -118.9721,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Mount Shasta Siskiyou, CA",
+      "lat": 41.31,
+      "lng": -122.3861,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Mendocino Coastal Ridge, CA",
+      "lat": 39.3077,
+      "lng": -123.7995,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Joshua Tree High Desert, CA",
+      "lat": 34.1347,
+      "lng": -116.3131,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Reno Tahoe Corridor, NV",
+      "lat": 39.5296,
+      "lng": -119.8138,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Austin Travis Exurb, TX",
+      "lat": 30.2672,
+      "lng": -97.7431,
       "last_surcharge": 0,
       "consecutive_zeros": 0
     },
@@ -102,9 +303,37 @@
       "consecutive_zeros": 0
     },
     {
-      "name": "Minocqua Northwoods, WI",
-      "lat": 45.8944,
-      "lng": -89.6886,
+      "name": "Waco Brazos Corridor, TX",
+      "lat": 31.5493,
+      "lng": -97.1467,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Lubbock South Plains, TX",
+      "lat": 33.5779,
+      "lng": -101.8552,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Huntsville Tennessee Valley, AL",
+      "lat": 34.6818,
+      "lng": -86.581,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Destin Emerald Coast, FL",
+      "lat": 30.4005,
+      "lng": -86.1477,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Tampa Outer Bay, FL",
+      "lat": 27.9506,
+      "lng": -82.4572,
       "last_surcharge": 0,
       "consecutive_zeros": 0
     },
@@ -114,13 +343,34 @@
       "lng": -85.6206,
       "last_surcharge": 0,
       "consecutive_zeros": 0
+    },
+    {
+      "name": "Brainerd Lakes, MN",
+      "lat": 46.3527,
+      "lng": -94.1632,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Branson Ozark Lakes, MO",
+      "lat": 36.6437,
+      "lng": -93.2185,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
+    },
+    {
+      "name": "Fayetteville Ozarks, AR",
+      "lat": 36.0626,
+      "lng": -94.1574,
+      "last_surcharge": 0,
+      "consecutive_zeros": 0
     }
   ],
-  "hotspot_cursor": 1,
+  "hotspot_cursor": 0,
   "stats": {
-    "total_probes_run": 2,
-    "high_demand_hits_found": 1,
+    "total_probes_run": 1130,
+    "high_demand_hits_found": 3,
     "cycles_completed": 0
   },
-  "last_run_timestamp": "2026-11-07T15:03:12.045467+00:00"
+  "last_run_timestamp": "2026-11-20T20:13:50.640221+00:00"
 }

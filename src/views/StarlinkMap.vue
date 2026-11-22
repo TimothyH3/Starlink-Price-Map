@@ -451,6 +451,75 @@ function getTierColor(node: SurchargeRecord): string {
   return '#38bdf8';
 }
 
+function getTierKey(node: SurchargeRecord): string {
+  if (node.status === 'sold_out') return 'sold_out';
+  const pricing = getPointPricing(node);
+  if (pricing.surcharge > 0) return 'high_demand';
+  if (pricing.adjustment > 0 || (pricing.total !== null && pricing.total > 120)) return 'congested';
+  if (pricing.adjustment < 0 || (pricing.total !== null && pricing.total < 120)) return 'discounted';
+  return 'standard';
+}
+
+function getHexagonLatLngs(centerLat: number, centerLng: number, radiusKm: number = 12.5): [number, number][] {
+  const latRad = centerLat * Math.PI / 180;
+  const kmPerLat = 111.132;
+  const kmPerLng = 111.320 * Math.cos(latRad);
+  const coords: [number, number][] = [];
+  for (let i = 0; i < 6; i++) {
+    const angleDeg = 30 + i * 60; // 30, 90, 150, 210, 270, 330 (pointy-topped)
+    const angleRad = angleDeg * Math.PI / 180;
+    const dLat = (radiusKm * Math.sin(angleRad)) / kmPerLat;
+    const dLng = (radiusKm * Math.cos(angleRad)) / kmPerLng;
+    coords.push([centerLat + dLat, centerLng + dLng]);
+  }
+  return coords;
+}
+
+function ensureSvgGradients() {
+  const svg = document.querySelector('.leaflet-pane.leaflet-overlay-pane svg');
+  if (!svg || svg.querySelector('#hex-aura-congested')) return;
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  defs.innerHTML = `
+    <radialGradient id="hex-aura-congested" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f97316" stop-opacity="0.55" />
+      <stop offset="25%" stop-color="#f97316" stop-opacity="0.38" />
+      <stop offset="55%" stop-color="#f97316" stop-opacity="0.18" />
+      <stop offset="80%" stop-color="#f97316" stop-opacity="0.05" />
+      <stop offset="100%" stop-color="#f97316" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="hex-aura-high_demand" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ef4444" stop-opacity="0.60" />
+      <stop offset="25%" stop-color="#ef4444" stop-opacity="0.42" />
+      <stop offset="55%" stop-color="#ef4444" stop-opacity="0.20" />
+      <stop offset="80%" stop-color="#ef4444" stop-opacity="0.06" />
+      <stop offset="100%" stop-color="#ef4444" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="hex-aura-standard" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.50" />
+      <stop offset="25%" stop-color="#38bdf8" stop-opacity="0.32" />
+      <stop offset="55%" stop-color="#38bdf8" stop-opacity="0.15" />
+      <stop offset="80%" stop-color="#38bdf8" stop-opacity="0.04" />
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="hex-aura-discounted" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.55" />
+      <stop offset="25%" stop-color="#10b981" stop-opacity="0.36" />
+      <stop offset="55%" stop-color="#10b981" stop-opacity="0.16" />
+      <stop offset="80%" stop-color="#10b981" stop-opacity="0.05" />
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0" />
+    </radialGradient>
+    <radialGradient id="hex-aura-sold_out" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#c084fc" stop-opacity="0.50" />
+      <stop offset="25%" stop-color="#c084fc" stop-opacity="0.32" />
+      <stop offset="55%" stop-color="#c084fc" stop-opacity="0.15" />
+      <stop offset="80%" stop-color="#c084fc" stop-opacity="0.04" />
+      <stop offset="100%" stop-color="#c084fc" stop-opacity="0" />
+    </radialGradient>
+  `;
+  svg.insertBefore(defs, svg.firstChild);
+}
+
 function getBannerClass(rec: SurchargeRecord): string {
   if (rec.status === 'sold_out') return 'banner-sold_out';
   if ((rec.surcharge_amount || 0) > 0) return 'banner-high_demand';
@@ -641,30 +710,53 @@ function renderMarkers() {
   if (!markersLayerGroup) return;
   markersLayerGroup.clearLayers();
 
-  let count = 0;
-  for (const node of rawSurchargeData) {
+  const activeNodes = rawSurchargeData.filter(node => {
     const pricing = getPointPricing(node);
     const s = pricing.surcharge || 0;
     const fee = pricing.total;
     const isSold = node.status === 'sold_out';
 
-    if (isSold && !tierFilters.tierSoldOut) continue;
-    if (s > 0 && !tierFilters.tierSurcharge) continue;
-    if (!isSold && s === 0 && (pricing.adjustment < 0 || fee < 120) && !tierFilters.tierDiscount) continue;
-    if (!isSold && s === 0 && pricing.adjustment === 0 && fee === 120 && !tierFilters.tierStandard) continue;
-    if (!isSold && s === 0 && (pricing.adjustment > 0 || fee > 120) && !tierFilters.tierCongested) continue;
+    if (isSold && !tierFilters.tierSoldOut) return false;
+    if (s > 0 && !tierFilters.tierSurcharge) return false;
+    if (!isSold && s === 0 && (pricing.adjustment < 0 || fee < 120) && !tierFilters.tierDiscount) return false;
+    if (!isSold && s === 0 && pricing.adjustment === 0 && fee === 120 && !tierFilters.tierStandard) return false;
+    if (!isSold && s === 0 && (pricing.adjustment > 0 || fee > 120) && !tierFilters.tierCongested) return false;
+    return true;
+  });
 
+  // Pass 1: Render outer fading gradient auras spanning 65 km surrounding area
+  for (const node of activeNodes) {
+    const tierKey = getTierKey(node);
+    const aura = L.circle([node.lat, node.lng], {
+      radius: 65000, // 65 km real-world geographic ground radius
+      stroke: false,
+      interactive: false,
+      className: `starlink-hex-aura starlink-aura-${tierKey}`
+    });
+    markersLayerGroup.addLayer(aura);
+  }
+
+  // Ensure SVG gradients exist
+  ensureSvgGradients();
+
+  // Pass 2: Render crisp central Starlink cell hexagons (12.5 km circumradius matching Starlink cells)
+  let count = 0;
+  for (const node of activeNodes) {
     count++;
+    const pricing = getPointPricing(node);
+    const s = pricing.surcharge || 0;
+    const fee = pricing.total;
+    const isSold = node.status === 'sold_out';
     const color = getTierColor(node);
-    const radius = s > 0 ? 8.5 : pricing.adjustment > 0 ? 7.5 : pricing.adjustment < 0 ? 7.0 : 6.0;
 
-    const marker = L.circleMarker([node.lat, node.lng], {
-      radius,
-      fillColor: color,
+    const hexCoords = getHexagonLatLngs(node.lat, node.lng, 12.5);
+    const hex = L.polygon(hexCoords, {
       color: '#ffffff',
-      weight: 1.2,
-      opacity: 0.9,
-      fillOpacity: 0.8
+      weight: 1.8,
+      opacity: 0.95,
+      fillColor: color,
+      fillOpacity: 0.72,
+      className: 'starlink-cell-hex'
     });
 
     const tip = isSold
@@ -677,14 +769,30 @@ function renderMarkers() {
             ? `${formatMoney(fee)}/mo (${formatMoney(pricing.base)} base - ${formatMoney(Math.abs(pricing.adjustment))} Discount)`
             : `${formatMoney(fee)}/mo Standard Base Plan`;
 
-    marker.bindTooltip(tip, { direction: 'top', offset: [0, -6] });
+    hex.bindTooltip(tip, { className: 'starlink-hex-tooltip', direction: 'top', offset: [0, -10] });
 
-    marker.on('click', (e: any) => {
+    hex.on('mouseover', function (this: any) {
+      this.setStyle({
+        weight: 3.0,
+        color: '#38bdf8',
+        fillOpacity: 0.94
+      });
+    });
+
+    hex.on('mouseout', function (this: any) {
+      this.setStyle({
+        weight: 1.8,
+        color: '#ffffff',
+        fillOpacity: 0.72
+      });
+    });
+
+    hex.on('click', (e: any) => {
       L.DomEvent.stopPropagation(e);
       inspectPoint(node);
     });
 
-    markersLayerGroup.addLayer(marker);
+    markersLayerGroup.addLayer(hex);
   }
   filteredCount.value = count;
 }
