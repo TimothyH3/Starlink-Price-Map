@@ -292,6 +292,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, onBeforeUnmount } from 'vue';
+import * as h3 from 'h3-js';
 
 declare const L: any;
 
@@ -386,56 +387,39 @@ function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lo
   return R * c;
 }
 
-// Pointy-topped regular hexagonal honeycomb grid snapping (Zero overlap guaranteed)
-// Circumradius R = 12.5 km. Column spacing = sqrt(3)*R ~= 21.65 km, Row spacing = 1.5*R = 18.75 km.
-const HEX_RADIUS_KM = 12.5;
-const REF_LAT = 38.0;
-const REF_LNG = -97.0;
+// Official Starlink Map Spatial Index (Uber H3 Resolution 5)
+// Starlink officially schedules spot beams, capacity, and map availability using H3 Res 5 (~252 km² cells)
+const STARLINK_H3_RES = 5;
 
-function snapToHexGrid(lat: number, lng: number, radiusKm: number = HEX_RADIUS_KM) {
-  const kmPerLat = 111.132;
-  const kmPerLng = 111.320 * Math.cos(REF_LAT * Math.PI / 180);
-  const x = (lng - REF_LNG) * kmPerLng;
-  const y = (lat - REF_LAT) * kmPerLat;
-  const R = radiusKm;
-
-  const r = (2.0 / 3.0) * (y / R);
-  const q = (Math.sqrt(3) / 3.0) * (x / R) - r / 2.0;
-
-  let xc = q;
-  let zc = r;
-  let yc = -xc - zc;
-
-  let rx = Math.round(xc);
-  let ry = Math.round(yc);
-  let rz = Math.round(zc);
-
-  const xDiff = Math.abs(rx - xc);
-  const yDiff = Math.abs(ry - yc);
-  const zDiff = Math.abs(rz - zc);
-
-  if (xDiff > yDiff && xDiff > zDiff) {
-    rx = -ry - rz;
-  } else if (yDiff > zDiff) {
-    ry = -rx - rz;
-  } else {
-    rz = -rx - ry;
+function getH3Cell(lat: number, lng: number) {
+  try {
+    const cellId = (h3 as any).latLngToCell ? (h3 as any).latLngToCell(lat, lng, STARLINK_H3_RES) : (h3 as any).geoToH3(lat, lng, STARLINK_H3_RES);
+    const center = (h3 as any).cellToLatLng ? (h3 as any).cellToLatLng(cellId) : (h3 as any).h3ToGeo(cellId);
+    const boundary = (h3 as any).cellToBoundary ? (h3 as any).cellToBoundary(cellId) : (h3 as any).h3ToGeoBoundary(cellId);
+    return {
+      cellId,
+      cellKey: cellId,
+      centerLat: center[0],
+      centerLng: center[1],
+      boundary: boundary as [number, number][],
+      isH3: true
+    };
+  } catch (e) {
+    console.warn('H3 indexing error:', e);
+    const fallback = getHexagonLatLngs(lat, lng, 11.35);
+    return {
+      cellId: `${Math.round(lat * 100)}_${Math.round(lng * 100)}`,
+      cellKey: `${Math.round(lat * 100)}_${Math.round(lng * 100)}`,
+      centerLat: lat,
+      centerLng: lng,
+      boundary: fallback,
+      isH3: false
+    };
   }
+}
 
-  const qSnap = rx;
-  const rSnap = rz;
-
-  const xCenter = R * Math.sqrt(3) * (qSnap + rSnap / 2.0);
-  const yCenter = R * (3.0 / 2.0) * rSnap;
-
-  const centerLat = REF_LAT + yCenter / kmPerLat;
-  const centerLng = REF_LNG + xCenter / kmPerLng;
-
-  return {
-    centerLat: Math.round(centerLat * 10000) / 10000,
-    centerLng: Math.round(centerLng * 10000) / 10000,
-    cellKey: `${qSnap}_${rSnap}`
-  };
+function snapToHexGrid(lat: number, lng: number) {
+  return getH3Cell(lat, lng);
 }
 
 function getPointPricing(rec: SurchargeRecord) {
@@ -841,7 +825,8 @@ function renderMarkers() {
     const isSold = cell.status === 'sold_out';
     const color = getTierColor(cell);
 
-    const hexCoords = getHexagonLatLngs(cell.centerLat, cell.centerLng, 12.5);
+    // Use authentic official Starlink H3 Resolution 5 boundary polygon
+    const hexCoords = cell.boundary || getHexagonLatLngs(cell.centerLat, cell.centerLng, 11.35);
     const hex = L.polygon(hexCoords, {
       color: '#ffffff',
       weight: 2.2,
