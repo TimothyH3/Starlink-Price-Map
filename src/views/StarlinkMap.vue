@@ -220,7 +220,7 @@
                 :disabled="isCheckingLive"
               >
                 <span v-if="isCheckingLive" class="spinner"></span>
-                <span>{{ isCheckingLive ? 'PROBING STARLINK CHECKOUT...' : '⚡ CHECK LIVE STARLINK SERVICE COST' }}</span>
+                <span>{{ isCheckingLive ? 'CHECKING SERVICE COST...' : 'CHECK SERVICE COST' }}</span>
               </button>
               <p class="live-check-note font-sans">
                 {{ inspectedLocation.isLiveVerified 
@@ -371,9 +371,10 @@ const STARLINK_H3_RES = 5;
 
 function getH3Cell(lat: number, lng: number) {
   try {
-    const cellId = (h3 as any).latLngToCell ? (h3 as any).latLngToCell(lat, lng, STARLINK_H3_RES) : (h3 as any).geoToH3(lat, lng, STARLINK_H3_RES);
-    const center = (h3 as any).cellToLatLng ? (h3 as any).cellToLatLng(cellId) : (h3 as any).h3ToGeo(cellId);
-    const boundary = (h3 as any).cellToBoundary ? (h3 as any).cellToBoundary(cellId) : (h3 as any).h3ToGeoBoundary(cellId);
+    const h3Lib = h3 as any;
+    const cellId = h3Lib.latLngToCell ? h3Lib.latLngToCell(lat, lng, STARLINK_H3_RES) : (h3Lib['geoToH3'] ? h3Lib['geoToH3'](lat, lng, STARLINK_H3_RES) : null);
+    const center = h3Lib.cellToLatLng ? h3Lib.cellToLatLng(cellId) : (h3Lib['h3ToGeo'] ? h3Lib['h3ToGeo'](cellId) : [lat, lng]);
+    const boundary = h3Lib.cellToBoundary ? h3Lib.cellToBoundary(cellId) : (h3Lib['h3ToGeoBoundary'] ? h3Lib['h3ToGeoBoundary'](cellId) : null);
     return {
       cellId,
       cellKey: cellId,
@@ -561,14 +562,14 @@ function getBannerClass(rec: SurchargeRecord): string {
 }
 
 function getStatusTitle(rec: SurchargeRecord): string {
-  if (rec.status === 'sold_out') return 'UNAVAILABLE (SOLD OUT)';
+  if (rec.status === 'sold_out') return 'UNAVAILABLE';
   const pricing = getPointPricing(rec);
   if (isPending(rec)) return 'UNSAMPLED CELL';
   const cost = pricing.total !== null ? pricing.total : 120;
-  if (cost >= 170) return '$170+ HIGH CONGESTION COST';
-  if (cost >= 130) return '$130–$170 CONGESTION ADJUSTED';
-  if (cost >= 85) return '$85–$130 STANDARD BASE RATE';
-  return '$55–$85 CHEAPEST / DISCOUNTED';
+  if (cost >= 170) return '$170+T';
+  if (cost >= 130) return '$130–$170';
+  if (cost >= 85) return '$85–$130';
+  return '$0-$85';
 }
 
 function getAdjustmentText(rec: SurchargeRecord): string {
@@ -979,17 +980,17 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
         } else {
           rawSurchargeData.unshift(updatedRecord);
         }
-        calculateStats();
+        computeStats();
         renderMarkers();
       } else {
         inspectedLocation.value = {
-          lat: result.lat,
-          lng: result.lng,
+          lat: result.lat || lat,
+          lng: result.lng || lng,
           base_service_fee: null,
           service_price_adjustment: 0,
           total_monthly_fee: null,
           monthly_service_fee: null,
-          surcharge_amount: result.surcharge_amount,
+          surcharge_amount: result.surcharge_amount ?? null,
           status: result.status || 'unsampled',
           sampled_at: result.timestamp || new Date().toISOString(),
           location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
