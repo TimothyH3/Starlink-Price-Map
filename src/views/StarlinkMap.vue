@@ -776,13 +776,13 @@ function renderMarkers() {
     const snapped = snapToHexGrid(node.lat, node.lng);
     const key = snapped.cellKey;
     if (!cellMap.has(key)) {
-      cellMap.set(key, { ...node, centerLat: snapped.centerLat, centerLng: snapped.centerLng, cellKey: key });
+      cellMap.set(key, { ...node, centerLat: snapped.centerLat, centerLng: snapped.centerLng, cellKey: key, boundary: snapped.boundary, isH3: snapped.isH3 });
     } else {
       const existing = cellMap.get(key)!;
       const existingTime = new Date(existing.sampled_at || 0).getTime();
       const newTime = new Date(node.sampled_at || 0).getTime();
       if (newTime > existingTime || node.isLiveVerified) {
-        cellMap.set(key, { ...node, centerLat: snapped.centerLat, centerLng: snapped.centerLng, cellKey: key });
+        cellMap.set(key, { ...node, centerLat: snapped.centerLat, centerLng: snapped.centerLng, cellKey: key, boundary: snapped.boundary, isH3: snapped.isH3 });
       }
     }
   }
