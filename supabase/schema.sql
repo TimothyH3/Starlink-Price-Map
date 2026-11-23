@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS starlink_surcharges (
     surcharge_amount INTEGER NOT NULL DEFAULT 0 CHECK (surcharge_amount >= 0),
     status TEXT NOT NULL CHECK (status IN ('standard', 'discounted', 'congested', 'high_demand', 'sold_out')),
     adjustment_description TEXT DEFAULT 'Service Price Adjustment',
+    last_checked TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     sampled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     sample_type TEXT NOT NULL,
     location_name TEXT,
@@ -27,6 +28,8 @@ CREATE TABLE IF NOT EXISTS starlink_surcharges (
 );
 
 -- Migration for existing tables (safe to re-run):
+ALTER TABLE starlink_surcharges ADD COLUMN IF NOT EXISTS last_checked TIMESTAMPTZ DEFAULT NOW();
+UPDATE starlink_surcharges SET last_checked = sampled_at WHERE last_checked IS NULL;
 ALTER TABLE starlink_surcharges ADD COLUMN IF NOT EXISTS base_service_fee NUMERIC(6, 2) DEFAULT 120.00;
 ALTER TABLE starlink_surcharges ADD COLUMN IF NOT EXISTS service_price_adjustment NUMERIC(6, 2) DEFAULT 0.00;
 ALTER TABLE starlink_surcharges ADD COLUMN IF NOT EXISTS total_monthly_fee NUMERIC(6, 2) DEFAULT 120.00;
@@ -38,6 +41,9 @@ CREATE INDEX IF NOT EXISTS idx_starlink_surcharges_geom
     ON starlink_surcharges USING GIST (coordinates);
 
 -- B-Tree indexes for filtering by tier, status, and freshness
+CREATE INDEX IF NOT EXISTS idx_starlink_surcharges_last_checked 
+    ON starlink_surcharges (last_checked DESC);
+
 CREATE INDEX IF NOT EXISTS idx_starlink_surcharges_sampled_at 
     ON starlink_surcharges (sampled_at DESC);
 
@@ -102,12 +108,12 @@ BEGIN
     INSERT INTO starlink_surcharges (
         coordinates, lat, lng, 
         base_service_fee, service_price_adjustment, total_monthly_fee, monthly_service_fee,
-        surcharge_amount, status, adjustment_description, sampled_at, sample_type, location_name
+        surcharge_amount, status, adjustment_description, last_checked, sampled_at, sample_type, location_name
     )
     VALUES (
         v_geom, p_lat, p_lng, 
         p_base_service_fee, p_service_price_adjustment, p_total_monthly_fee, p_total_monthly_fee,
-        p_surcharge_amount, p_status, p_adjustment_description, NOW(), p_sample_type, p_location_name
+        p_surcharge_amount, p_status, p_adjustment_description, NOW(), NOW(), p_sample_type, p_location_name
     )
     ON CONFLICT (ROUND(lat::NUMERIC, 3), ROUND(lng::NUMERIC, 3))
     DO UPDATE SET
@@ -118,6 +124,7 @@ BEGIN
         surcharge_amount = EXCLUDED.surcharge_amount,
         status = EXCLUDED.status,
         adjustment_description = EXCLUDED.adjustment_description,
+        last_checked = NOW(),
         sampled_at = NOW(),
         sample_type = EXCLUDED.sample_type,
         location_name = COALESCE(EXCLUDED.location_name, starlink_surcharges.location_name),

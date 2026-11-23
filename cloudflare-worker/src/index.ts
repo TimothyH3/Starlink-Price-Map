@@ -31,6 +31,7 @@ export interface ServiceCostResult {
   adjustment_description?: string;
   location_name?: string;
   timestamp: string;
+  last_checked?: string;
   source: 'verified_live' | 'postgis_cache' | 'standard_capacity' | 'unsampled';
   distance_km?: number;
   message?: string;

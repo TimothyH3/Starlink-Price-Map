@@ -208,7 +208,7 @@
               </div>
               <div class="detail-row">
                 <span class="detail-label">LAST CHECKED:</span>
-                <span class="detail-value">{{ isPending(inspectedLocation) ? 'Awaiting check' : formatDate(inspectedLocation.sampled_at) }}</span>
+                <span class="detail-value">{{ isPending(inspectedLocation) ? 'Awaiting check' : formatDate(inspectedLocation.last_checked || inspectedLocation.sampled_at) }}</span>
               </div>
             </div>
 
@@ -259,6 +259,7 @@ interface SurchargeRecord {
   monthly_service_fee?: number | null;
   surcharge_amount: number | null;
   status: 'standard' | 'discounted' | 'congested' | 'high_demand' | 'sold_out' | 'unsampled';
+  last_checked?: string;
   sampled_at: string;
   sample_type?: string;
   location_name?: string;
@@ -580,14 +581,22 @@ function getAdjustmentText(rec: SurchargeRecord): string {
   return `$0.00/mo (Standard)`;
 }
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr?: string): string {
+  if (!dateStr) return 'Awaiting check';
   try {
     const d = new Date(dateStr);
-    const now = new Date();
-    const diffDays = Math.floor((now.getTime() - d.getTime()) / (1000 * 3600 * 24));
-    if (diffDays <= 0) return 'Today (Live)';
-    if (diffDays === 1) return 'Yesterday';
-    return `${diffDays} days ago`;
+    if (isNaN(d.getTime())) return dateStr;
+    const datePart = d.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+    const timePart = d.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+    return `${datePart}, ${timePart}`;
   } catch {
     return dateStr;
   }
@@ -960,6 +969,7 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
           monthly_service_fee: result.total_monthly_fee,
           surcharge_amount: result.surcharge_amount,
           status: result.status,
+          last_checked: result.last_checked || result.timestamp || new Date().toISOString(),
           sampled_at: result.timestamp || new Date().toISOString(),
           location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
           proximity_km: 0,
@@ -992,6 +1002,7 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
           monthly_service_fee: null,
           surcharge_amount: result.surcharge_amount ?? null,
           status: result.status || 'unsampled',
+          last_checked: result.last_checked || result.timestamp || new Date().toISOString(),
           sampled_at: result.timestamp || new Date().toISOString(),
           location_name: result.location_name || `Coordinate (${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W)`,
           isUnsampled: true,
