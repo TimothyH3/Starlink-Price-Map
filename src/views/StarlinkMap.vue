@@ -55,14 +55,6 @@
 
       <!-- Quick Action Controls -->
       <div class="hud-controls">
-        <div class="map-mode-toggle font-mono" role="group" aria-label="Map Display Mode">
-          <button @click="setMapMode('cells')" :class="['mode-pill-btn', { active: mapMode === 'cells' }]" title="Show authentic Starlink H3 hexagonal cells">
-            <span>HEX CELLS</span>
-          </button>
-          <button @click="setMapMode('blended')" :class="['mode-pill-btn', { active: mapMode === 'blended' }]" title="Show high-level blended regional gradient map (no cells)">
-            <span>BLENDED OVERVIEW</span>
-          </button>
-        </div>
         <div class="status-indicator" :title="'Database: ' + (supabaseOnline ? 'Connected' : 'Using Local Cache')">
           <span class="pulse-dot" :class="{ online: supabaseOnline }"></span>
           <span class="status-label font-mono">{{ supabaseOnline ? 'SUPABASE SYNCED' : 'OFFLINE CACHE' }}</span>
@@ -310,14 +302,6 @@ const tierFilters = reactive({
   tierSoldOut: true
 });
 
-const mapMode = ref<'cells' | 'blended'>('cells');
-
-function setMapMode(mode: 'cells' | 'blended') {
-  if (mapMode.value === mode) return;
-  mapMode.value = mode;
-  renderMarkers();
-}
-
 const tierCounts = reactive({
   tierDiscount: 0,
   tierStandard: 0,
@@ -519,91 +503,102 @@ function getHexagonLatLngs(centerLat: number, centerLng: number, radiusKm: numbe
 }
 
 function ensureSvgGradients() {
-  const svg = document.querySelector('.leaflet-pane.leaflet-overlay-pane svg');
+  let svg = document.querySelector('.leaflet-pane.leaflet-overlay-pane svg');
+  if (!svg && mapInstance) {
+    const dummy = L.circle([0, 0], { radius: 1 }).addTo(mapInstance);
+    dummy.remove();
+    svg = document.querySelector('.leaflet-pane.leaflet-overlay-pane svg');
+  }
   if (!svg || svg.querySelector('#hex-aura-congested')) return;
 
   const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
   defs.innerHTML = `
-    <!-- Standard 125km cell auras: starting at 0.48 opacity to exactly match translucent cell fill -->
+    <!-- Standard cell auras (zoomed in): starts at 0.60 opacity to match cell and stays strong through cell core -->
     <radialGradient id="hex-aura-congested" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#f97316" stop-opacity="0.48" />
-      <stop offset="25%" stop-color="#f97316" stop-opacity="0.36" />
-      <stop offset="50%" stop-color="#f97316" stop-opacity="0.22" />
-      <stop offset="75%" stop-color="#f97316" stop-opacity="0.08" />
-      <stop offset="90%" stop-color="#f97316" stop-opacity="0.02" />
+      <stop offset="0%" stop-color="#f97316" stop-opacity="0.60" />
+      <stop offset="20%" stop-color="#f97316" stop-opacity="0.60" />
+      <stop offset="40%" stop-color="#f97316" stop-opacity="0.45" />
+      <stop offset="65%" stop-color="#f97316" stop-opacity="0.25" />
+      <stop offset="85%" stop-color="#f97316" stop-opacity="0.08" />
       <stop offset="100%" stop-color="#f97316" stop-opacity="0" />
     </radialGradient>
     <radialGradient id="hex-aura-high_demand" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#ef4444" stop-opacity="0.48" />
-      <stop offset="25%" stop-color="#ef4444" stop-opacity="0.36" />
-      <stop offset="50%" stop-color="#ef4444" stop-opacity="0.22" />
-      <stop offset="75%" stop-color="#ef4444" stop-opacity="0.08" />
-      <stop offset="90%" stop-color="#ef4444" stop-opacity="0.02" />
+      <stop offset="0%" stop-color="#ef4444" stop-opacity="0.60" />
+      <stop offset="20%" stop-color="#ef4444" stop-opacity="0.60" />
+      <stop offset="40%" stop-color="#ef4444" stop-opacity="0.45" />
+      <stop offset="65%" stop-color="#ef4444" stop-opacity="0.25" />
+      <stop offset="85%" stop-color="#ef4444" stop-opacity="0.08" />
       <stop offset="100%" stop-color="#ef4444" stop-opacity="0" />
     </radialGradient>
     <radialGradient id="hex-aura-standard" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.48" />
-      <stop offset="25%" stop-color="#38bdf8" stop-opacity="0.36" />
-      <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.22" />
-      <stop offset="75%" stop-color="#38bdf8" stop-opacity="0.08" />
-      <stop offset="90%" stop-color="#38bdf8" stop-opacity="0.02" />
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.60" />
+      <stop offset="20%" stop-color="#38bdf8" stop-opacity="0.60" />
+      <stop offset="40%" stop-color="#38bdf8" stop-opacity="0.45" />
+      <stop offset="65%" stop-color="#38bdf8" stop-opacity="0.25" />
+      <stop offset="85%" stop-color="#38bdf8" stop-opacity="0.08" />
       <stop offset="100%" stop-color="#38bdf8" stop-opacity="0" />
     </radialGradient>
     <radialGradient id="hex-aura-discounted" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#10b981" stop-opacity="0.48" />
-      <stop offset="25%" stop-color="#10b981" stop-opacity="0.36" />
-      <stop offset="50%" stop-color="#10b981" stop-opacity="0.22" />
-      <stop offset="75%" stop-color="#10b981" stop-opacity="0.08" />
-      <stop offset="90%" stop-color="#10b981" stop-opacity="0.02" />
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.60" />
+      <stop offset="20%" stop-color="#10b981" stop-opacity="0.60" />
+      <stop offset="40%" stop-color="#10b981" stop-opacity="0.45" />
+      <stop offset="65%" stop-color="#10b981" stop-opacity="0.25" />
+      <stop offset="85%" stop-color="#10b981" stop-opacity="0.08" />
       <stop offset="100%" stop-color="#10b981" stop-opacity="0" />
     </radialGradient>
     <radialGradient id="hex-aura-sold_out" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#c084fc" stop-opacity="0.48" />
-      <stop offset="25%" stop-color="#c084fc" stop-opacity="0.36" />
-      <stop offset="50%" stop-color="#c084fc" stop-opacity="0.22" />
-      <stop offset="75%" stop-color="#c084fc" stop-opacity="0.08" />
-      <stop offset="90%" stop-color="#c084fc" stop-opacity="0.02" />
+      <stop offset="0%" stop-color="#c084fc" stop-opacity="0.60" />
+      <stop offset="20%" stop-color="#c084fc" stop-opacity="0.60" />
+      <stop offset="40%" stop-color="#c084fc" stop-opacity="0.45" />
+      <stop offset="65%" stop-color="#c084fc" stop-opacity="0.25" />
+      <stop offset="85%" stop-color="#c084fc" stop-opacity="0.08" />
       <stop offset="100%" stop-color="#c084fc" stop-opacity="0" />
     </radialGradient>
 
-    <!-- Macro Blended Mesh 250km auras: soft, continuous blending across regions (no cells) -->
+    <!-- Macro Blended Mesh (zoomed out): flat regional gradient map without borders -->
     <radialGradient id="mesh-aura-congested" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#f97316" stop-opacity="0.42" />
-      <stop offset="30%" stop-color="#f97316" stop-opacity="0.28" />
-      <stop offset="60%" stop-color="#f97316" stop-opacity="0.14" />
-      <stop offset="85%" stop-color="#f97316" stop-opacity="0.04" />
+      <stop offset="0%" stop-color="#f97316" stop-opacity="0.60" />
+      <stop offset="25%" stop-color="#f97316" stop-opacity="0.55" />
+      <stop offset="50%" stop-color="#f97316" stop-opacity="0.38" />
+      <stop offset="75%" stop-color="#f97316" stop-opacity="0.18" />
+      <stop offset="90%" stop-color="#f97316" stop-opacity="0.06" />
       <stop offset="100%" stop-color="#f97316" stop-opacity="0" />
     </radialGradient>
     <radialGradient id="mesh-aura-high_demand" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#ef4444" stop-opacity="0.42" />
-      <stop offset="30%" stop-color="#ef4444" stop-opacity="0.28" />
-      <stop offset="60%" stop-color="#ef4444" stop-opacity="0.14" />
-      <stop offset="85%" stop-color="#ef4444" stop-opacity="0.04" />
+      <stop offset="0%" stop-color="#ef4444" stop-opacity="0.60" />
+      <stop offset="25%" stop-color="#ef4444" stop-opacity="0.55" />
+      <stop offset="50%" stop-color="#ef4444" stop-opacity="0.38" />
+      <stop offset="75%" stop-color="#ef4444" stop-opacity="0.18" />
+      <stop offset="90%" stop-color="#ef4444" stop-opacity="0.06" />
       <stop offset="100%" stop-color="#ef4444" stop-opacity="0" />
     </radialGradient>
     <radialGradient id="mesh-aura-standard" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.42" />
-      <stop offset="30%" stop-color="#38bdf8" stop-opacity="0.28" />
-      <stop offset="60%" stop-color="#38bdf8" stop-opacity="0.14" />
-      <stop offset="85%" stop-color="#38bdf8" stop-opacity="0.04" />
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.60" />
+      <stop offset="25%" stop-color="#38bdf8" stop-opacity="0.55" />
+      <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.38" />
+      <stop offset="75%" stop-color="#38bdf8" stop-opacity="0.18" />
+      <stop offset="90%" stop-color="#38bdf8" stop-opacity="0.06" />
       <stop offset="100%" stop-color="#38bdf8" stop-opacity="0" />
     </radialGradient>
     <radialGradient id="mesh-aura-discounted" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#10b981" stop-opacity="0.42" />
-      <stop offset="30%" stop-color="#10b981" stop-opacity="0.28" />
-      <stop offset="60%" stop-color="#10b981" stop-opacity="0.14" />
-      <stop offset="85%" stop-color="#10b981" stop-opacity="0.04" />
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.60" />
+      <stop offset="25%" stop-color="#10b981" stop-opacity="0.55" />
+      <stop offset="50%" stop-color="#10b981" stop-opacity="0.38" />
+      <stop offset="75%" stop-color="#10b981" stop-opacity="0.18" />
+      <stop offset="90%" stop-color="#10b981" stop-opacity="0.06" />
       <stop offset="100%" stop-color="#10b981" stop-opacity="0" />
     </radialGradient>
     <radialGradient id="mesh-aura-sold_out" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#c084fc" stop-opacity="0.42" />
-      <stop offset="30%" stop-color="#c084fc" stop-opacity="0.28" />
-      <stop offset="60%" stop-color="#c084fc" stop-opacity="0.14" />
-      <stop offset="85%" stop-color="#c084fc" stop-opacity="0.04" />
+      <stop offset="0%" stop-color="#c084fc" stop-opacity="0.60" />
+      <stop offset="25%" stop-color="#c084fc" stop-opacity="0.55" />
+      <stop offset="50%" stop-color="#c084fc" stop-opacity="0.38" />
+      <stop offset="75%" stop-color="#c084fc" stop-opacity="0.18" />
+      <stop offset="90%" stop-color="#c084fc" stop-opacity="0.06" />
       <stop offset="100%" stop-color="#c084fc" stop-opacity="0" />
     </radialGradient>
   `;
   svg.insertBefore(defs, svg.firstChild);
+}
 }
 
 // Algorithmic regional downsampling for the high-level blended gradient map
@@ -705,6 +700,18 @@ async function initMap() {
   }).addTo(mapInstance);
 
   markersLayerGroup = L.layerGroup().addTo(mapInstance);
+
+  ensureSvgGradients();
+
+  let lastZoomMode = mapInstance.getZoom() <= 5 ? 'overview' : 'cells';
+  mapInstance.on('zoomend', () => {
+    const currentMode = mapInstance.getZoom() <= 5 ? 'overview' : 'cells';
+    if (currentMode !== lastZoomMode) {
+      lastZoomMode = currentMode;
+      renderMarkers();
+    }
+    ensureSvgGradients();
+  });
 
   mapInstance.on('click', (e: any) => {
     handleMapClick(e.latlng.lat, e.latlng.lng);
@@ -866,23 +873,26 @@ function renderMarkers() {
   // Ensure SVG gradients exist
   ensureSvgGradients();
 
-  if (mapMode.value === 'blended') {
-    // High-level meshed blended regional gradient map (no cells to avoid overload)
+  const isOverview = mapInstance ? mapInstance.getZoom() <= 5 : true;
+
+  if (isOverview) {
+    // Zoomed out (majority of US visible): render flat blended regional gradient map (no cells, no borders)
     const macroPoints = getMacroMeshPoints(activeNodes, 160);
     for (const pt of macroPoints) {
       const tierKey = getTierKey(pt);
       const meshAura = L.circle([pt.lat, pt.lng], {
-        radius: 250000, // 250 km regional ground radius for smooth overlapping gradient mesh
+        radius: 260000, // 260 km regional ground radius for smooth overlapping gradient mesh
         stroke: false,
         interactive: false,
         className: `starlink-mesh-aura starlink-mesh-${tierKey}`
       });
       markersLayerGroup.addLayer(meshAura);
     }
+    ensureSvgGradients();
     return;
   }
 
-  // Detailed Cells Mode:
+  // Detailed Cells Mode (zoom >= 6):
   // Pass 1: Render outer fading gradient auras spanning 125 km surrounding area
   for (const cell of uniqueCells) {
     const tierKey = getTierKey(cell);
@@ -894,6 +904,8 @@ function renderMarkers() {
     });
     markersLayerGroup.addLayer(aura);
   }
+
+  ensureSvgGradients();
 
   // Pass 2: Render translucent central Starlink cell hexagons (revealing map features underneath)
   let count = 0;
@@ -910,9 +922,9 @@ function renderMarkers() {
     const hex = L.polygon(hexCoords, {
       color: '#ffffff',
       weight: 1.8,
-      opacity: 0.70,
+      opacity: 0.75,
       fillColor: color,
-      fillOpacity: 0.48, // Translucent to clearly reveal underlying basemap roads, cities, topography
+      fillOpacity: 0.60, // Translucent to clearly reveal underlying basemap roads, cities, topography
       className: 'starlink-cell-hex'
     });
 
@@ -936,7 +948,7 @@ function renderMarkers() {
         weight: 2.8,
         color: '#ffffff',
         opacity: 1.0,
-        fillOpacity: 0.78
+        fillOpacity: 0.85
       });
     });
 
@@ -944,8 +956,8 @@ function renderMarkers() {
       this.setStyle({
         weight: 1.8,
         color: '#ffffff',
-        opacity: 0.70,
-        fillOpacity: 0.48
+        opacity: 0.75,
+        fillOpacity: 0.60
       });
     });
 
@@ -1444,47 +1456,6 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 14px;
-}
-
-/* Map Display Mode Segmented Switcher */
-.map-mode-toggle {
-  display: inline-flex;
-  align-items: center;
-  background: rgba(15, 23, 42, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 9999px;
-  padding: 2px;
-  gap: 2px;
-}
-
-.mode-pill-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  border: none;
-  color: #94a3b8;
-  padding: 5px 12px;
-  border-radius: 9999px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  transition: all 180ms ease;
-  user-select: none;
-  white-space: nowrap;
-}
-
-.mode-pill-btn:hover {
-  color: #f1f5f9;
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.mode-pill-btn.active {
-  background: #38bdf8;
-  color: #041019;
-  font-weight: 700;
-  box-shadow: 0 0 10px rgba(56, 189, 248, 0.45);
 }
 
 .status-indicator {
@@ -2002,9 +1973,7 @@ onBeforeUnmount(() => {
 
 :deep(.starlink-mesh-aura) {
   pointer-events: none;
-  mix-blend-mode: screen;
-  filter: blur(10px);
-  opacity: 0.88;
+  opacity: 1.0;
 }
 :deep(.starlink-mesh-congested) {
   fill: url(#mesh-aura-congested) !important;
