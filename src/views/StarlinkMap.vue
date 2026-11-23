@@ -77,7 +77,6 @@
       <div class="floating-legend font-mono">
         <div class="legend-header">
           <span class="legend-title">MONTHLY SERVICE TIERS</span>
-          <span class="legend-count">{{ filteredCount }} NODES</span>
         </div>
         <div class="legend-items">
           <label class="legend-item tier-green" :class="{ disabled: !tierFilters.tierDiscount }">
@@ -183,10 +182,6 @@
               <span>⚠️</span>
               <span>+{{ formatMoney(inspectedLocation.surcharge_amount) }} ONE-TIME DEMAND SURCHARGE</span>
             </div>
-            <div v-else-if="!isPending(inspectedLocation) && inspectedLocation.status !== 'sold_out'" class="surcharge-none-banner font-mono">
-              <span>✓</span>
-              <span>No upfront demand surcharge ($0)</span>
-            </div>
 
             <div class="card-details font-mono">
               <div class="detail-row">
@@ -208,16 +203,8 @@
                 <span class="detail-value" :style="{ color: (inspectedLocation.surcharge_amount || 0) > 0 ? '#ef4444' : '#34d399' }">{{ isPending(inspectedLocation) ? 'Pending' : ((inspectedLocation.surcharge_amount || 0) > 0 ? '+' + formatMoney(inspectedLocation.surcharge_amount) : '$0') }}</span>
               </div>
               <div class="detail-row">
-                <span class="detail-label">COORDINATES:</span>
-                <span class="detail-value">{{ inspectedLocation.lat.toFixed(4) }}°N, {{ inspectedLocation.lng.toFixed(4) }}°W</span>
-              </div>
-              <div class="detail-row">
                 <span class="detail-label">LOCATION:</span>
-                <span class="detail-value font-sans">{{ inspectedLocation.location_name || 'US Point' }}</span>
-              </div>
-              <div class="detail-row">
-                <span class="detail-label">DATA STATUS:</span>
-                <span class="detail-value">{{ inspectedLocation.isLiveVerified ? 'Verified Live from Starlink Checkout' : inspectedLocation.isUnsampled ? 'No verified sample in database' : (inspectedLocation.proximity_km === 0 ? 'Verified Ingested Node' : `Ingested Sample (${inspectedLocation.proximity_km?.toFixed(1)} km away)`) }}</span>
+                <span class="detail-value font-sans">{{ cleanLocationName(inspectedLocation.location_name) }}</span>
               </div>
               <div class="detail-row">
                 <span class="detail-label">LAST CHECKED:</span>
@@ -250,40 +237,6 @@
             <div class="empty-icon">📍</div>
             <p class="empty-text">Click anywhere on the map or search an address to inspect local Starlink monthly service rates and congestion fees.</p>
           </div>
-        </div>
-
-        <!-- US Network Pricing Analytics -->
-        <div class="sidebar-section">
-          <h2 class="sidebar-heading font-mono">NETWORK PRICING STATS</h2>
-          <div class="stats-grid font-mono">
-            <div class="stat-box">
-              <span class="stat-number text-accent">{{ stats.totalSamples }}</span>
-              <span class="stat-label">TOTAL NODES</span>
-            </div>
-            <div class="stat-box">
-              <span class="stat-number text-green">{{ stats.discountNodes }}</span>
-              <span class="stat-label">DISCOUNT NODES</span>
-            </div>
-            <div class="stat-box">
-              <span class="stat-number text-orange">{{ stats.totalSamples > 0 ? '$' + stats.avgMonthly + '/mo' : '$0' }}</span>
-              <span class="stat-label">AVG SERVICE COST</span>
-            </div>
-            <div class="stat-box">
-              <span class="stat-number text-crimson">{{ stats.surchargesFound }}</span>
-              <span class="stat-label">SURCHARGES FOUND</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Architecture Specs Footer -->
-        <div class="sidebar-section stack-specs font-mono">
-          <h2 class="sidebar-heading">INFRASTRUCTURE STACK</h2>
-          <ul class="specs-list">
-            <li><span class="spec-bullet">•</span> 4-Step Starlink Qualification Pipeline</li>
-            <li><span class="spec-bullet">•</span> PostGIS / Supabase Geometries</li>
-            <li><span class="spec-bullet">•</span> Cloudflare Worker Edge Proxy</li>
-            <li><span class="spec-bullet">•</span> Weekly Rotating Honeycomb Grid</li>
-          </ul>
         </div>
       </aside>
     </main>
@@ -373,6 +326,31 @@ function formatMoney(val: any): string {
   if (val === null || val === undefined || isNaN(val)) return '$0';
   const num = Number(val);
   return num % 1 === 0 ? `$${num.toFixed(0)}` : `$${num.toFixed(2)}`;
+}
+
+// Clean address helper: extract city/state/region and strip specific street address numbers, suites, zip codes
+function cleanLocationName(raw?: string): string {
+  if (!raw || typeof raw !== 'string') return 'US Point';
+  let s = raw.trim();
+  s = s.replace(/,\s*(United States of America|United States|USA|US)$/i, '');
+  s = s.replace(/\s+\d{5}(-\d{4})?$/, '');
+  if (/coordinate|area near/i.test(s) || /^-?\d+\.\d+/.test(s)) {
+    return s;
+  }
+  const parts = s.split(',').map(p => p.trim()).filter(Boolean);
+  if (parts.length >= 3) {
+    const state = parts[parts.length - 1].replace(/\s+\d{5}(-\d{4})?$/, '').trim();
+    const city = parts[parts.length - 2].trim();
+    return `${city}, ${state}`;
+  } else if (parts.length === 2) {
+    let p0 = parts[0];
+    let p1 = parts[1].replace(/\s+\d{5}(-\d{4})?$/, '').trim();
+    if (/^\d+\s+/.test(p0)) {
+      p0 = p0.replace(/^\d+[\w\s.-]+?\s+(Ave|St|Street|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Way|Ct|Court|Ln|Lane)\b/i, '').trim() || p0;
+    }
+    return `${p0}, ${p1}`;
+  }
+  return s;
 }
 
 function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -1126,6 +1104,40 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+@font-face {
+  font-family: 'D-DIN';
+  src: url('/fonts/D-DIN.woff2') format('woff2'),
+       url('https://cdn.jsdelivr.net/gh/amcchord/datto-d-din@master/D-DIN.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'D-DIN';
+  src: url('/fonts/D-DIN-Bold.woff2') format('woff2'),
+       url('https://cdn.jsdelivr.net/gh/amcchord/datto-d-din@master/D-DIN-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'D-DIN';
+  src: url('/fonts/D-DIN-Italic.woff2') format('woff2'),
+       url('https://cdn.jsdelivr.net/gh/amcchord/datto-d-din@master/D-DIN-Italic.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+.starlink-map-container,
+.starlink-map-container *,
+.font-mono,
+.font-sans {
+  font-family: 'D-DIN', -apple-system, BlinkMacSystemFont, sans-serif !important;
+}
+
 .starlink-map-container {
   position: relative;
   width: 100%;
@@ -1135,7 +1147,6 @@ onBeforeUnmount(() => {
   background-color: #07090e;
   color: #f1f5f9;
   overflow: hidden;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 /* Ambient Glows */
