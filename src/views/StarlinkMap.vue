@@ -82,31 +82,31 @@
           <label class="legend-item tier-green" :class="{ disabled: !tierFilters.tierDiscount }">
             <input type="checkbox" v-model="tierFilters.tierDiscount" @change="applyTierFilters" />
             <span class="legend-swatch swatch-green"></span>
-            <span class="legend-label">$55–$85 Cheapest / Discount</span>
+            <span class="legend-label">$0–$85</span>
             <span class="tier-count">({{ tierCounts.tierDiscount }})</span>
           </label>
           <label class="legend-item tier-cyan" :class="{ disabled: !tierFilters.tierStandard }">
             <input type="checkbox" v-model="tierFilters.tierStandard" @change="applyTierFilters" />
             <span class="legend-swatch swatch-cyan"></span>
-            <span class="legend-label">$85–$130 Standard Base Rate</span>
+            <span class="legend-label">$85–$130</span>
             <span class="tier-count">({{ tierCounts.tierStandard }})</span>
           </label>
           <label class="legend-item tier-orange" :class="{ disabled: !tierFilters.tierCongested }">
             <input type="checkbox" v-model="tierFilters.tierCongested" @change="applyTierFilters" />
             <span class="legend-swatch swatch-orange"></span>
-            <span class="legend-label">$130–$170 Congestion Adjusted</span>
+            <span class="legend-label">$130–$170</span>
             <span class="tier-count">({{ tierCounts.tierCongested }})</span>
           </label>
           <label class="legend-item tier-red" :class="{ disabled: !tierFilters.tierSurcharge }">
             <input type="checkbox" v-model="tierFilters.tierSurcharge" @change="applyTierFilters" />
             <span class="legend-swatch swatch-red"></span>
-            <span class="legend-label">$170+ High Congestion Cost</span>
+            <span class="legend-label">$170+</span>
             <span class="tier-count">({{ tierCounts.tierSurcharge }})</span>
           </label>
           <label class="legend-item tier-purple" :class="{ disabled: !tierFilters.tierSoldOut }">
             <input type="checkbox" v-model="tierFilters.tierSoldOut" @change="applyTierFilters" />
             <span class="legend-swatch swatch-purple"></span>
-            <span class="legend-label">Unavailable (Sold Out)</span>
+            <span class="legend-label">Unavailable</span>
             <span class="tier-count">({{ tierCounts.tierSoldOut }})</span>
           </label>
         </div>
@@ -131,7 +131,7 @@
           <!-- Live Query Diagnostic Error Card -->
           <div v-if="liveQueryError" class="inspector-card card-error">
             <div class="card-status-banner banner-high_demand">
-              <span class="banner-title font-mono">⚠️ LIVE QUERY FAILED</span>
+              <span class="banner-title font-mono">QUERY FAILED</span>
               <span class="banner-surcharge font-mono">OFFLINE</span>
             </div>
 
