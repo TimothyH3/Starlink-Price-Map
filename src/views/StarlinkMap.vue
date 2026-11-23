@@ -321,6 +321,7 @@ const stats = reactive({
 let mapInstance: any = null;
 let markersLayerGroup: any = null;
 let activePinMarker: any = null;
+let activeSelectionHex: any = null;
 let rawSurchargeData: SurchargeRecord[] = [];
 
 function formatMoney(val: any): string {
@@ -870,29 +871,23 @@ function applyTierFilters() {
 }
 
 function handleMapClick(lat: number, lng: number) {
-  let nearestNode: SurchargeRecord | null = null;
-  let minDistance = Infinity;
+  const snapped = snapToHexGrid(lat, lng);
 
-  for (const node of rawSurchargeData) {
-    const dist = calculateHaversineDistance(lat, lng, node.lat, node.lng);
-    if (dist < minDistance) {
-      minDistance = dist;
-      nearestNode = node;
-    }
-  }
+  const existingNode = rawSurchargeData.find(node => {
+    const s = snapToHexGrid(node.lat, node.lng);
+    return s.cellKey === snapped.cellKey;
+  });
 
-  const isCachedWithin25km = minDistance <= 25.0;
-
-  if (isCachedWithin25km && nearestNode) {
+  if (existingNode) {
     inspectedLocation.value = {
-      ...nearestNode,
-      proximity_km: minDistance,
-      location_name: nearestNode.location_name || `Area near ${lat.toFixed(3)}°N, ${lng.toFixed(3)}°W`
+      ...existingNode,
+      proximity_km: 0
     };
+    dropRadarPin(snapped.centerLat, snapped.centerLng, snapped.boundary, false);
   } else {
     inspectedLocation.value = {
-      lat,
-      lng,
+      lat: snapped.centerLat,
+      lng: snapped.centerLng,
       base_service_fee: null,
       service_price_adjustment: 0,
       total_monthly_fee: null,
@@ -900,23 +895,38 @@ function handleMapClick(lat: number, lng: number) {
       surcharge_amount: null,
       status: 'unsampled',
       isUnsampled: true,
-      location_name: `Unsampled Coordinate (${lat.toFixed(3)}°, ${lng.toFixed(3)}°)`,
-      sampled_at: new Date().toISOString(),
-      proximity_km: minDistance < 1000 ? minDistance : undefined
+      location_name: `Unsampled Cell (${snapped.centerLat.toFixed(3)}°, ${snapped.centerLng.toFixed(3)}°)`,
+      sampled_at: new Date().toISOString()
     };
+    dropRadarPin(snapped.centerLat, snapped.centerLng, snapped.boundary, true);
   }
-
-  dropRadarPin(lat, lng);
 }
 
 function inspectPoint(node: SurchargeRecord) {
+  const snapped = snapToHexGrid(node.lat, node.lng);
   inspectedLocation.value = { ...node, proximity_km: 0 };
-  dropRadarPin(node.lat, node.lng);
+  dropRadarPin(snapped.centerLat, snapped.centerLng, snapped.boundary, false);
 }
 
-function dropRadarPin(lat: number, lng: number) {
+function dropRadarPin(lat: number, lng: number, boundary?: any, isUnsampled?: boolean) {
   if (activePinMarker) {
     mapInstance.removeLayer(activePinMarker);
+    activePinMarker = null;
+  }
+  if (activeSelectionHex) {
+    mapInstance.removeLayer(activeSelectionHex);
+    activeSelectionHex = null;
+  }
+
+  if (boundary && isUnsampled) {
+    activeSelectionHex = L.polygon(boundary, {
+      color: '#06b6d4',
+      weight: 2.5,
+      dashArray: '5, 5',
+      fillColor: '#06b6d4',
+      fillOpacity: 0.18,
+      interactive: false
+    }).addTo(mapInstance);
   }
 
   const radarIcon = L.divIcon({
@@ -982,7 +992,7 @@ async function triggerLiveWorkerCheck(lat: number, lng: number) {
         const existingIdx = rawSurchargeData.findIndex(
           p => {
             const s = snapToHexGrid(p.lat, p.lng);
-            return s.cellKey === snapped.cellKey || calculateHaversineDistance(p.lat, p.lng, lat, lng) < 22;
+            return s.cellKey === snapped.cellKey;
           }
         );
         if (existingIdx >= 0) {

@@ -386,7 +386,7 @@ async function queryPostGISProximity(
       body: JSON.stringify({
         p_lat: lat,
         p_lng: lng,
-        p_radius_km: 25.0,
+        p_radius_km: 10.0,
         p_max_age_days: 30
       })
     });
