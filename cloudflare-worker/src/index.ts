@@ -46,7 +46,7 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const corsHeaders: Record<string, string> = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Access-Control-Max-Age': '86400'
     };
@@ -87,9 +87,41 @@ export default {
       }
     }
 
+    // Delete endpoint for administrative maintenance & pruning invalid points (e.g. water bodies)
+    if (request.method === 'DELETE' && (pathname === '/points' || pathname === '/api/points')) {
+      const deleteFilter = url.searchParams.get('filter');
+      if (!deleteFilter) {
+        return new Response(
+          JSON.stringify({ error: "Missing required 'filter' query parameter (e.g. location_name=like.86VG*)." }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const deleteUrl = `${env.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/starlink_surcharges?${deleteFilter}`;
+      try {
+        const delResp = await fetch(deleteUrl, {
+          method: 'DELETE',
+          headers: {
+            'apikey': supabaseKey,
+            'Authorization': `Bearer ${supabaseKey}`,
+            'Prefer': 'return=representation'
+          }
+        });
+        const respText = await delResp.text();
+        return new Response(respText, {
+          status: delResp.status,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      } catch (err: any) {
+        return new Response(
+          JSON.stringify({ error: err?.message || 'Failed to delete records from Supabase' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
     if (request.method !== 'GET') {
       return new Response(
-        JSON.stringify({ error: 'Method not allowed. Use GET or POST.' }),
+        JSON.stringify({ error: 'Method not allowed. Use GET, POST, or DELETE.' }),
         { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
