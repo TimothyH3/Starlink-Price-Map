@@ -4,9 +4,8 @@ compatibility_date = "2024-09-25"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-# Configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY via Cloudflare dashboard or `wrangler secret put`
 SUPABASE_URL = "https://lbwwynyvpvecgclvyqrv.supabase.co"
-
-# Set CORS origins
 ALLOWED_ORIGINS = "*"
 
+[triggers]
+crons = ["*/10 * * * *"]

@@ -1,15 +1,15 @@
 /**
  * Cloudflare Worker: Starlink Regional Service Cost & Surcharge Spatial API Proxy
- * Route: GET /check-fee?lat={lat}&lng={lng} or /api/check-fee?lat={lat}&lng={lng}
+ * Routes:
+ *   - GET /check-fee?lat={lat}&lng={lng} or /api/check-fee
+ *   - GET /points or /api/points
+ *   - POST /ingest or /api/ingest
+ *   - DELETE /points?filter=...
+ *   - GET /api/cron-tick (Manual trigger / diagnostic)
+ *   - GET /api/migrate-thresholds (Sync PostGIS database rows to new tier definitions)
  *
- * 1. Checks Supabase PostGIS spatial cache for verified samples within 25 km.
- * 2. If not cached, performs live qualification via Starlink's address & pricing pipeline.
- * 3. Authentically extracts:
- *    - Base Residential Service Plan ($55, $120, $130, etc.)
- *    - Genuine Service Price Adjustment from Starlink promotionEvaluation (e.g. +$26.00, +$13.00, -$16.50)
- *    - Total Monthly Service Cost (Base Service Fee + Service Price Adjustment)
- *    - Upfront Demand Congestion Surcharges ($0, $100-$1,500)
- * 4. Never returns fake heuristics or arbitrary guesses.
+ * Scheduled Cron: Runs every 10 minutes ("* /10 * * * *") via native Cloudflare Cron Triggers.
+ * Cost: $0.00 / month (Included entirely within free plan).
  */
 
 export interface Env {
@@ -32,7 +32,7 @@ export interface ServiceCostResult {
   location_name?: string;
   timestamp: string;
   last_checked?: string;
-  source: 'verified_live' | 'postgis_cache' | 'standard_capacity' | 'unsampled';
+  source: 'verified_live' | 'postgis_cache' | 'standard_capacity' | 'unsampled' | 'cron_worker';
   distance_km?: number;
   message?: string;
   starlink_verify_url: string;
@@ -41,6 +41,157 @@ export interface ServiceCostResult {
 function formatPrice(val: number): string {
   return val % 1 === 0 ? val.toFixed(0) : val.toFixed(2);
 }
+
+// ---------------------------------------------------------------------------
+// CONUS & WATER BODY BOUNDARY VERIFICATION
+// ---------------------------------------------------------------------------
+const CONUS_STATES = new Set([
+  'AL', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'ID', 'IL', 'IN', 'IA',
+  'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV',
+  'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD',
+  'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC'
+]);
+
+// Polygons covering water surfaces of the Great Lakes and Gulf of Mexico
+const WATER_POLYGONS: Record<string, [number, number][]> = {
+  lakeSuperior: [
+    [46.7, -92.2], [47.0, -91.7], [47.4, -91.0], [47.9, -90.0], [48.0, -89.4],
+    [48.3, -89.2], [48.8, -88.5], [49.0, -88.0], [48.8, -87.0], [48.8, -86.2],
+    [48.0, -85.2], [47.5, -84.8], [46.8, -84.4], [46.4, -84.6], [46.5, -85.5],
+    [46.7, -86.5], [46.5, -87.4], [46.9, -87.9], [47.4, -88.0], [47.4, -88.5],
+    [47.0, -88.6], [46.8, -89.4], [46.7, -90.8], [46.7, -92.2]
+  ],
+  lakeMichigan: [
+    [41.62, -87.20], [41.75, -87.50], [41.88, -87.60], [42.05, -87.66], [42.50, -87.80],
+    [43.00, -87.88], [43.50, -87.75], [44.00, -87.60], [44.50, -87.45], [45.30, -87.00],
+    [45.85, -87.00], [46.00, -86.50], [46.10, -85.70], [45.80, -84.75], [45.50, -84.95],
+    [45.00, -85.40], [44.20, -86.35], [43.20, -86.35], [42.20, -86.45], [41.75, -86.85],
+    [41.62, -87.20]
+  ],
+  lakeHuron: [
+    [43.0, -82.4], [43.5, -82.5], [44.0, -83.0], [44.5, -83.4], [45.4, -83.5],
+    [45.9, -84.3], [46.1, -84.1], [46.4, -83.7], [46.1, -82.5], [46.0, -81.0],
+    [45.4, -80.4], [44.7, -79.8], [44.4, -80.5], [44.0, -81.7], [43.2, -82.0],
+    [43.0, -82.4]
+  ],
+  lakeErie: [
+    [41.4, -82.8], [41.6, -83.4], [41.9, -83.2], [42.0, -82.6], [42.3, -81.8],
+    [42.7, -80.8], [42.9, -79.0], [42.8, -78.9], [42.5, -79.5], [42.1, -80.2],
+    [41.7, -81.4], [41.4, -82.4], [41.4, -82.8]
+  ],
+  lakeOntario: [
+    [43.3, -79.8], [43.6, -79.5], [43.8, -78.8], [44.0, -77.8], [44.2, -76.5],
+    [44.0, -76.3], [43.6, -76.3], [43.3, -77.0], [43.2, -77.8], [43.2, -79.2],
+    [43.3, -79.8]
+  ],
+  gulfOfMexico: [
+    [24.0, -97.5], [26.0, -97.1], [27.8, -97.0], [28.5, -96.0], [29.0, -94.8],
+    [29.4, -93.8], [29.2, -91.0], [28.8, -89.4], [30.0, -88.5], [30.0, -86.0],
+    [29.6, -84.0], [28.0, -83.0], [26.5, -82.2], [25.0, -81.8], [24.3, -82.5],
+    [24.0, -97.5]
+  ]
+};
+
+function pointInPolygon(lat: number, lng: number, vs: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+    const xi = vs[i][0], yi = vs[i][1];
+    const xj = vs[j][0], yj = vs[j][1];
+    const intersect = ((yi > lng) !== (yj > lng)) &&
+      (lat < (xj - xi) * (lng - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+export function isWaterCoordinate(lat: number, lng: number): boolean {
+  // Reject non-CONUS bounding box
+  if (lat < 24.4 || lat > 49.4 || lng < -125.0 || lng > -66.9) {
+    return true;
+  }
+  // Check Great Lakes and Gulf polygons
+  for (const poly of Object.values(WATER_POLYGONS)) {
+    if (pointInPolygon(lat, lng, poly)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// STRATEGIC TARGET LOCATIONS ACROSS CONTINENTAL US
+// ---------------------------------------------------------------------------
+const PRIORITY_CANDIDATE_TARGETS: { name: string; lat: number; lng: number }[] = [
+  // Appalachia & Blue Ridge
+  { name: 'Asheville Blue Ridge, NC', lat: 35.5951, lng: -82.5515 },
+  { name: 'Boone Watauga High Country, NC', lat: 36.2168, lng: -81.6758 },
+  { name: 'Gatlinburg Great Smoky Mtns, TN', lat: 35.7143, lng: -83.5102 },
+  { name: 'Chattanooga Cumberland Plateau, TN', lat: 35.0456, lng: -85.3097 },
+  { name: 'Knoxville Ridge Corridor, TN', lat: 36.0104, lng: -84.3880 },
+  { name: 'Dahlonega North GA Mtns, GA', lat: 34.5262, lng: -84.0713 },
+  { name: 'Hazard Eastern Coalfields, KY', lat: 37.2487, lng: -83.4488 },
+  { name: 'Charleston Kanawha Valley, WV', lat: 38.3498, lng: -81.6326 },
+  { name: 'Roanoke Blue Ridge Valley, VA', lat: 37.2710, lng: -79.9414 },
+  { name: 'Shenandoah Valley, VA', lat: 38.4496, lng: -78.8689 },
+
+  // Missouri Ozarks & Arkansas
+  { name: 'Hartshorn Ozarks, MO', lat: 37.2650, lng: -91.6850 },
+  { name: 'Branson Ozark Lakes, MO', lat: 36.6437, lng: -93.2185 },
+  { name: 'Rolla Missouri Ozarks, MO', lat: 37.9514, lng: -91.7713 },
+  { name: 'West Plains Ozark Highlands, MO', lat: 36.7281, lng: -91.8524 },
+  { name: 'Fayetteville Ozarks, AR', lat: 36.0626, lng: -94.1574 },
+  { name: 'Mountain Home Ozark Lakes, AR', lat: 36.3353, lng: -92.3854 },
+  { name: 'Hot Springs Ouachita, AR', lat: 34.5037, lng: -93.0552 },
+
+  // Pacific Northwest & Intermountain West
+  { name: 'Seattle Puget Sound, WA', lat: 47.6062, lng: -122.3321 },
+  { name: 'Spokane Inland Empire, WA', lat: 47.6588, lng: -117.4260 },
+  { name: 'Bend Deschutes Corridor, OR', lat: 44.0582, lng: -121.3153 },
+  { name: 'Eugene Willamette Valley, OR', lat: 44.0521, lng: -123.0868 },
+  { name: 'Boise Treasure Valley, ID', lat: 43.6150, lng: -116.2023 },
+  { name: 'Coeur d Alene Hinterland, ID', lat: 47.6777, lng: -116.7804 },
+  { name: 'Kalispell Flathead Basin, MT', lat: 48.1920, lng: -114.3553 },
+  { name: 'Bozeman Gallatin Valley, MT', lat: 45.6770, lng: -111.0429 },
+  { name: 'Missoula Clark Fork, MT', lat: 46.8721, lng: -114.0076 },
+  { name: 'Jackson Hole Teton, WY', lat: 43.4799, lng: -110.7624 },
+  { name: 'Wasatch Front Salt Lake, UT', lat: 40.7608, lng: -111.8910 },
+  { name: 'St. George Red Rock, UT', lat: 37.1041, lng: -113.5684 },
+
+  // Rocky Mountains & Southwest
+  { name: 'Aspen Roaring Fork, CO', lat: 39.1911, lng: -106.8370 },
+  { name: 'Durango San Juan, CO', lat: 37.2753, lng: -107.8801 },
+  { name: 'Denver Front Range, CO', lat: 39.7392, lng: -104.9903 },
+  { name: 'Flagstaff Coconino, AZ', lat: 35.1983, lng: -111.6513 },
+  { name: 'Sedona Oak Creek, AZ', lat: 34.8697, lng: -111.8315 },
+  { name: 'Show Low White Mtns, AZ', lat: 34.2542, lng: -110.0831 },
+  { name: 'Santa Fe Foothills, NM', lat: 35.6870, lng: -105.9378 },
+  { name: 'Taos Enchanted Circle, NM', lat: 36.4072, lng: -105.5734 },
+
+  // California & Nevada
+  { name: 'Truckee Lake Tahoe Basin, CA', lat: 39.3280, lng: -120.1278 },
+  { name: 'Mammoth Lakes Eastern Sierra, CA', lat: 37.6485, lng: -118.9721 },
+  { name: 'Mount Shasta Siskiyou, CA', lat: 41.3100, lng: -122.3861 },
+  { name: 'Mendocino Coastal Ridge, CA', lat: 39.3077, lng: -123.7995 },
+  { name: 'Joshua Tree High Desert, CA', lat: 34.1347, lng: -116.3131 },
+  { name: 'Reno Tahoe Corridor, NV', lat: 39.5296, lng: -119.8138 },
+
+  // Texas & Deep South
+  { name: 'Austin Travis Exurb, TX', lat: 30.2672, lng: -97.7431 },
+  { name: 'Fredericksburg Hill Country, TX', lat: 30.2752, lng: -98.8719 },
+  { name: 'Waco Brazos Corridor, TX', lat: 31.5493, lng: -97.1467 },
+  { name: 'Lubbock South Plains, TX', lat: 33.5779, lng: -101.8552 },
+  { name: 'Kerrville Guadalupe, TX', lat: 30.0474, lng: -99.1403 },
+  { name: 'Huntsville Tennessee Valley, AL', lat: 34.6818, lng: -86.5810 },
+  { name: 'Destin Inland Corridor, FL', lat: 30.4505, lng: -86.2000 },
+  { name: 'Lakeland Polk Heartland, FL', lat: 28.0395, lng: -81.9498 },
+
+  // Midwest & Northwoods
+  { name: 'Minocqua Northwoods, WI', lat: 45.8944, lng: -89.6886 },
+  { name: 'Traverse City Inland, MI', lat: 44.7000, lng: -85.5500 },
+  { name: 'Brainerd Lakes, MN', lat: 46.3527, lng: -94.1632 },
+  { name: 'Carbondale Shawnee, IL', lat: 37.7273, lng: -89.2168 },
+  { name: 'Bloomington Hoosier, IN', lat: 39.1653, lng: -86.5264 }
+];
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -51,19 +202,15 @@ export default {
       'Access-Control-Max-Age': '86400'
     };
 
-    // Handle CORS Preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders
-      });
+      return new Response(null, { status: 204, headers: corsHeaders });
     }
 
     const url = new URL(request.url);
     const pathname = url.pathname;
     const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || (env as any)['REDACTED'];
 
-    // Ingest batch endpoint for background sampling pipeline
+    // Ingest batch endpoint
     if (request.method === 'POST' && (pathname === '/ingest' || pathname === '/api/ingest')) {
       try {
         const body = await request.json() as any;
@@ -87,7 +234,48 @@ export default {
       }
     }
 
-    // Delete endpoint for administrative maintenance & pruning invalid points (e.g. water bodies)
+    // Cron diagnostic probe endpoint: triggers one automated scheduled sampling batch manually
+    if (pathname === '/api/cron-tick' || pathname === '/cron-tick') {
+      try {
+        const tickResult = await runScheduledSampling(env);
+        return new Response(
+          JSON.stringify({
+            status: 'ok',
+            type: 'manual_cron_trigger',
+            timestamp: new Date().toISOString(),
+            ...tickResult
+          }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } catch (err: any) {
+        return new Response(
+          JSON.stringify({ error: err?.message || 'Cron tick execution failed' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    // Database migration endpoint: synchronizes existing PostGIS rows to new tier definitions
+    if (pathname === '/api/migrate-thresholds' || pathname === '/migrate-thresholds') {
+      try {
+        const migrationResult = await migrateSupabaseThresholds(env, supabaseKey);
+        return new Response(
+          JSON.stringify({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            migration: migrationResult
+          }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } catch (err: any) {
+        return new Response(
+          JSON.stringify({ error: err?.message || 'Threshold migration failed' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    // Administrative delete endpoint
     if (request.method === 'DELETE' && (pathname === '/points' || pathname === '/api/points')) {
       const deleteFilter = url.searchParams.get('filter');
       if (!deleteFilter) {
@@ -126,12 +314,13 @@ export default {
       );
     }
 
-    // Health check endpoint
+    // Health check
     if (pathname === '/health' || pathname === '/') {
       return new Response(
         JSON.stringify({
           status: 'ok',
           service: 'starlink-service-cost-spatial-proxy',
+          cron: 'active (every 10 min)',
           time: new Date().toISOString()
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -154,7 +343,7 @@ export default {
       );
     }
 
-    // Match /check-fee or /api/check-fee
+    // Single location lookup: GET /check-fee?lat={lat}&lng={lng}
     if (pathname !== '/check-fee' && pathname !== '/api/check-fee') {
       return new Response(
         JSON.stringify({ error: 'Endpoint not found. Use /api/check-fee?lat={lat}&lng={lng} or /api/points' }),
@@ -183,7 +372,6 @@ export default {
     }
 
     const starlinkVerifyUrl = `https://www.starlink.com/residential?serviceAddress=${lat.toFixed(4)},${lng.toFixed(4)}`;
-
     const forceLive = url.searchParams.get('force') === 'true' || url.searchParams.get('refresh') === 'true';
 
     // Tier 1: Query Supabase PostGIS spatial cache (radius 25 km) unless forced
@@ -196,13 +384,13 @@ export default {
     if (!result) {
       result = await probeStarlinkLive(lat, lng, starlinkVerifyUrl);
 
-      // Tier 2b: Automatically save verified live result into Supabase in background
+      // Save verified live result into Supabase in background
       if (result && result.source === 'verified_live' && env.SUPABASE_URL && supabaseKey) {
         ctx.waitUntil(saveToSupabase(env, result, supabaseKey));
       }
     }
 
-    // Tier 3: If live qualification unreachable, return honest unsampled status
+    // Tier 3: Return unsampled status if unreachable
     const finalResult: ServiceCostResult = result || {
       lat,
       lng,
@@ -231,8 +419,70 @@ export default {
         }
       }
     );
+  },
+
+  /**
+   * Cloudflare Worker Native Cron Trigger handler
+   * Runs automatically every 10 minutes on Cloudflare's edge isolates.
+   */
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(runScheduledSampling(env));
   }
 };
+
+/**
+ * Executes a deterministic scheduled sampling step across the Continental US
+ */
+async function runScheduledSampling(env: Env): Promise<{ sampled: any[]; message: string }> {
+  const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || (env as any)['REDACTED'];
+  if (!env.SUPABASE_URL || !supabaseKey) {
+    return { sampled: [], message: 'Supabase credentials missing' };
+  }
+
+  // Deterministic 10-minute tick index ensures seamless progression without external DB state
+  const tickIndex = Math.floor(Date.now() / (10 * 60 * 1000));
+  const candidateIndex = tickIndex % PRIORITY_CANDIDATE_TARGETS.length;
+  const target = PRIORITY_CANDIDATE_TARGETS[candidateIndex];
+
+  // Secondary candidate target spaced half-way through the list
+  const secondaryIndex = (candidateIndex + Math.floor(PRIORITY_CANDIDATE_TARGETS.length / 2)) % PRIORITY_CANDIDATE_TARGETS.length;
+  const secondaryTarget = PRIORITY_CANDIDATE_TARGETS[secondaryIndex];
+
+  const targetsToProbe = [target, secondaryTarget];
+  const results: any[] = [];
+
+  for (const t of targetsToProbe) {
+    // Water gatekeeper: Skip coordinates inside Great Lakes or ocean
+    if (isWaterCoordinate(t.lat, t.lng)) {
+      console.warn(`[Cron Trigger] Skipping target in water body: ${t.name} (${t.lat}, ${t.lng})`);
+      continue;
+    }
+
+    const starlinkVerifyUrl = `https://www.starlink.com/residential?serviceAddress=${t.lat.toFixed(4)},${t.lng.toFixed(4)}`;
+    try {
+      const liveRes = await probeStarlinkLive(t.lat, t.lng, starlinkVerifyUrl);
+      if (liveRes && liveRes.source === 'verified_live') {
+        liveRes.source = 'cron_worker';
+        await saveToSupabase(env, liveRes, supabaseKey);
+        results.push({
+          target: t.name,
+          lat: t.lat,
+          lng: t.lng,
+          total_monthly_fee: liveRes.total_monthly_fee,
+          status: liveRes.status,
+          location_name: liveRes.location_name
+        });
+      }
+    } catch (err: any) {
+      console.error(`[Cron Trigger] Probe error for ${t.name}:`, err?.message || err);
+    }
+  }
+
+  return {
+    sampled: results,
+    message: `Cron tick completed. Probed ${results.length}/${targetsToProbe.length} targets successfully.`
+  };
+}
 
 /**
  * Executes Starlink's exact address qualification and pricing flow:
@@ -275,6 +525,12 @@ async function probeStarlinkLive(
     const stateLong = comps['administrative_area_level_1']?.long_name || '';
     const city = comps['locality']?.long_name || '';
     const zipCode = comps['postal_code']?.short_name || '';
+
+    // Gatekeeper: Must be within Continental US land boundaries and have a valid address
+    if (country !== 'US' || !CONUS_STATES.has(stateShort)) {
+      console.warn(`[Starlink Live] Address is not within CONUS: ${firstMatch.formatted_address} (${stateShort}, ${country})`);
+      return null;
+    }
 
     // 2. Create Lead
     const leadPayload = {
@@ -364,7 +620,7 @@ async function probeStarlinkLive(
     let status: 'discounted' | 'standard' | 'congested' | 'high_demand' | 'sold_out' = 'standard';
     let tierLabel = `$${formatPrice(totalMonthlyFee)}/mo Standard Base Rate`;
 
-    // Monthly service tiers: Green: $55-85, Blue: $85-130, Orange: $130-170, Red: $170+, Purple: unavailable
+    // Monthly service tiers: Green: <= $55, Blue: $55-130, Orange: $130-170, Red: $170+, Purple: unavailable
     if (deposit > 0) {
       status = 'sold_out';
       tierLabel = 'Unavailable (Sold Out)';
@@ -374,7 +630,7 @@ async function probeStarlinkLive(
     } else if (totalMonthlyFee >= 130) {
       status = 'congested';
       tierLabel = `$${formatPrice(totalMonthlyFee)}/mo (Congested)`;
-    } else if (totalMonthlyFee >= 85) {
+    } else if (totalMonthlyFee > 55) {
       status = 'standard';
       tierLabel = `$${formatPrice(totalMonthlyFee)}/mo (Standard)`;
     } else {
@@ -453,21 +709,22 @@ async function queryPostGISProximity(
         const nearest = rows[0];
         const surcharge = nearest.surcharge_amount || 0;
         const totalMonthlyFee = nearest.total_monthly_fee ?? nearest.monthly_service_fee ?? (nearest.status === 'discounted' ? 55 : nearest.status === 'congested' ? 143 : 120);
-        const baseService = nearest.base_service_fee ?? (totalMonthlyFee >= 130 ? 130 : totalMonthlyFee < 120 ? 55 : 120);
+        const baseService = nearest.base_service_fee ?? (totalMonthlyFee >= 130 ? 130 : totalMonthlyFee <= 55 ? 55 : 120);
         const adjustment = nearest.service_price_adjustment ?? Math.round((totalMonthlyFee - baseService) * 100) / 100;
 
         let status = nearest.status;
         if (!status || status === 'standard') {
-          if (surcharge > 0) status = 'high_demand';
-          else if (adjustment > 0 || totalMonthlyFee > 120) status = 'congested';
-          else if (adjustment < 0 || totalMonthlyFee < 120) status = 'discounted';
-          else status = 'standard';
+          if (surcharge > 0 || totalMonthlyFee >= 170) status = 'high_demand';
+          else if (totalMonthlyFee >= 130) status = 'congested';
+          else if (totalMonthlyFee > 55) status = 'standard';
+          else status = 'discounted';
         }
 
         let tierLabel = `$${formatPrice(totalMonthlyFee)}/mo`;
         if (surcharge > 0) tierLabel = `+$${surcharge} Demand Surcharge`;
         else if (status === 'discounted') tierLabel = `$${formatPrice(totalMonthlyFee)}/mo Discounted`;
         else if (status === 'congested') tierLabel = `$${formatPrice(totalMonthlyFee)}/mo Congested`;
+        else tierLabel = `$${formatPrice(totalMonthlyFee)}/mo Standard`;
 
         return {
           lat: nearest.lat,
@@ -511,7 +768,7 @@ async function saveToSupabase(
     p_lng: result.lng,
     p_surcharge_amount: result.surcharge_amount ?? 0,
     p_status: result.status,
-    p_sample_type: (result as any).sample_type || 'live_user_qualified',
+    p_sample_type: (result as any).sample_type || result.source || 'live_user_qualified',
     p_location_name: result.location_name,
     p_base_service_fee: result.base_service_fee ?? 120,
     p_service_price_adjustment: result.service_price_adjustment ?? 0,
@@ -563,4 +820,46 @@ async function fetchPointsFromSupabase(env: Env): Promise<any[]> {
     console.error('Failed to fetch points from Supabase:', err);
   }
   return [];
+}
+
+/**
+ * Migrates existing PostGIS database rows to align with newly defined thresholds:
+ * - total_monthly_fee > 55 AND total_monthly_fee < 130 -> 'standard'
+ * - total_monthly_fee <= 55 -> 'discounted'
+ */
+async function migrateSupabaseThresholds(env: Env, apiKey: string): Promise<any> {
+  if (!env.SUPABASE_URL || !apiKey) {
+    return { error: 'Missing Supabase credentials' };
+  }
+
+  const baseUrl = env.SUPABASE_URL.replace(/\/$/, '');
+  const headers = {
+    'apikey': apiKey,
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+    'Prefer': 'return=representation'
+  };
+
+  // 1. Update any nodes between $55 and $130 to 'standard'
+  const patchStandardUrl = `${baseUrl}/rest/v1/starlink_surcharges?total_monthly_fee=gt.55&total_monthly_fee=lt.130`;
+  const stdResp = await fetch(patchStandardUrl, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ status: 'standard' })
+  });
+  const stdData = await stdResp.json();
+
+  // 2. Update any nodes <= $55 to 'discounted'
+  const patchDiscountUrl = `${baseUrl}/rest/v1/starlink_surcharges?total_monthly_fee=lte.55`;
+  const discResp = await fetch(patchDiscountUrl, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ status: 'discounted' })
+  });
+  const discData = await discResp.json();
+
+  return {
+    updatedStandardCount: Array.isArray(stdData) ? stdData.length : stdData,
+    updatedDiscountCount: Array.isArray(discData) ? discData.length : discData
+  };
 }

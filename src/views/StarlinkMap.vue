@@ -82,13 +82,13 @@
           <label class="legend-item tier-green" :class="{ disabled: !tierFilters.tierDiscount }">
             <input type="checkbox" v-model="tierFilters.tierDiscount" @change="applyTierFilters" />
             <span class="legend-swatch swatch-green"></span>
-            <span class="legend-label">$0–$85</span>
+            <span class="legend-label">$0–$55</span>
             <span class="tier-count">({{ tierCounts.tierDiscount }})</span>
           </label>
           <label class="legend-item tier-cyan" :class="{ disabled: !tierFilters.tierStandard }">
             <input type="checkbox" v-model="tierFilters.tierStandard" @change="applyTierFilters" />
             <span class="legend-swatch swatch-cyan"></span>
-            <span class="legend-label">$85–$130</span>
+            <span class="legend-label">$55–$130</span>
             <span class="tier-count">({{ tierCounts.tierStandard }})</span>
           </label>
           <label class="legend-item tier-orange" :class="{ disabled: !tierFilters.tierCongested }">
@@ -442,12 +442,12 @@ function getPointPricing(rec: SurchargeRecord) {
     if (total !== undefined && total !== null) {
       total = Number(total);
       if (base === undefined || base === null) {
-        base = total >= 170 ? 170 : total >= 130 ? 130 : total < 85 ? 55 : 120;
+        base = total >= 170 ? 170 : total >= 130 ? 130 : total <= 55 ? 55 : 120;
       }
       adj = Math.round((total - Number(base)) * 100) / 100;
     } else {
       total = rec.status === 'discounted' ? 55 : rec.status === 'congested' ? 143 : 120;
-      base = total >= 170 ? 170 : total >= 130 ? 130 : total < 85 ? 55 : 120;
+      base = total >= 170 ? 170 : total >= 130 ? 130 : total <= 55 ? 55 : 120;
       adj = Math.round((total - base) * 100) / 100;
     }
   }
@@ -466,13 +466,13 @@ function isPending(rec: SurchargeRecord): boolean {
 }
 
 // Monthly service tiers matching total cheapest monthly cost:
-// Green: $55-85, Blue: $85-130, Orange: $130-170, Red: $170+, Purple: Unavailable
+// Green: $0-55, Blue: $55-130, Orange: $130-170, Red: $170+, Purple: Unavailable
 function getTierColor(node: SurchargeRecord): string {
   if (node.status === 'sold_out') return '#c084fc'; // Purple: unavailable
   const pricing = getPointPricing(node);
   const cost = pricing.total !== null ? pricing.total : 120;
-  if (cost < 85) return '#10b981';  // Green: $55 - $85
-  if (cost < 130) return '#38bdf8'; // Blue: $85 - $130
+  if (cost <= 55) return '#10b981';  // Green: $0 - $55
+  if (cost < 130) return '#38bdf8'; // Blue: $55 - $130
   if (cost < 170) return '#f97316'; // Orange: $130 - $170
   return '#ef4444';                 // Red: $170+
 }
@@ -481,8 +481,8 @@ function getTierKey(node: SurchargeRecord): string {
   if (node.status === 'sold_out') return 'sold_out'; // Purple: unavailable
   const pricing = getPointPricing(node);
   const cost = pricing.total !== null ? pricing.total : 120;
-  if (cost < 85) return 'discounted';  // Green: $55 - $85
-  if (cost < 130) return 'standard';   // Blue: $85 - $130
+  if (cost <= 55) return 'discounted';  // Green: $0 - $55
+  if (cost < 130) return 'standard';   // Blue: $55 - $130
   if (cost < 170) return 'congested';  // Orange: $130 - $170
   return 'high_demand';                // Red: $170+
 }
@@ -627,7 +627,7 @@ function getBannerClass(rec: SurchargeRecord): string {
   const cost = pricing.total !== null ? pricing.total : 120;
   if (cost >= 170) return 'banner-high_demand';
   if (cost >= 130) return 'banner-congested';
-  if (cost >= 85) return 'banner-standard';
+  if (cost > 55) return 'banner-standard';
   return 'banner-discount';
 }
 
@@ -638,8 +638,8 @@ function getStatusTitle(rec: SurchargeRecord): string {
   const cost = pricing.total !== null ? pricing.total : 120;
   if (cost >= 170) return '$170+T';
   if (cost >= 130) return '$130–$170';
-  if (cost >= 85) return '$85–$130';
-  return '$0-$85';
+  if (cost > 55) return '$55–$130';
+  return '$0–$55';
 }
 
 function getAdjustmentText(rec: SurchargeRecord): string {
@@ -814,7 +814,7 @@ function computeStats() {
       soldCount++;
     } else {
       const cost = pricing.total !== null ? pricing.total : 120;
-      if (cost < 85) discCount++;
+      if (cost <= 55) discCount++;
       else if (cost < 130) stdCount++;
       else if (cost < 170) congCount++;
       else surchCount++; // Red: $170+
@@ -843,8 +843,8 @@ function renderMarkers() {
 
     if (isSold && !tierFilters.tierSoldOut) return false;
     if (!isSold) {
-      if (fee < 85 && !tierFilters.tierDiscount) return false;
-      if (fee >= 85 && fee < 130 && !tierFilters.tierStandard) return false;
+      if (fee <= 55 && !tierFilters.tierDiscount) return false;
+      if (fee > 55 && fee < 130 && !tierFilters.tierStandard) return false;
       if (fee >= 130 && fee < 170 && !tierFilters.tierCongested) return false;
       if (fee >= 170 && !tierFilters.tierSurcharge) return false;
     }
@@ -934,10 +934,10 @@ function renderMarkers() {
       tip = `${formatMoney(fee)}/mo (Red: $170+ High Cost)` + (s > 0 ? ` [+$${s} Surcharge]` : '');
     } else if (fee >= 130) {
       tip = `${formatMoney(fee)}/mo (Orange: $130–$170 Congestion Adjusted)` + (s > 0 ? ` [+$${s} Surcharge]` : '');
-    } else if (fee >= 85) {
-      tip = `${formatMoney(fee)}/mo (Blue: $85–$130 Standard Rate)`;
+    } else if (fee > 55) {
+      tip = `${formatMoney(fee)}/mo (Blue: $55–$130 Standard Rate)`;
     } else {
-      tip = `${formatMoney(fee)}/mo (Green: $55–$85 Cheapest / Discount)`;
+      tip = `${formatMoney(fee)}/mo (Green: $0–$55 Cheapest / Discount)`;
     }
 
     hex.bindTooltip(tip, { className: 'starlink-hex-tooltip', direction: 'top', offset: [0, -10] });
