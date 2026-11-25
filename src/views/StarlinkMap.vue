@@ -55,10 +55,6 @@
 
       <!-- Quick Action Controls -->
       <div class="hud-controls">
-        <div class="status-indicator" :title="'Database: ' + (supabaseOnline ? 'Connected' : 'Using Local Cache')">
-          <span class="pulse-dot" :class="{ online: supabaseOnline }"></span>
-          <span class="status-label font-mono">{{ supabaseOnline ? 'SUPABASE SYNCED' : 'OFFLINE CACHE' }}</span>
-        </div>
         <button @click="toggleSidebar" class="hud-action-btn font-mono" title="Toggle Telemetry Sidebar">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
