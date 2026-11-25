@@ -12,6 +12,8 @@
  * Cost: $0.00 / month (Included entirely within free plan).
  */
 
+import * as h3 from 'h3-js';
+
 export interface Env {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
@@ -36,6 +38,17 @@ export interface ServiceCostResult {
   distance_km?: number;
   message?: string;
   starlink_verify_url: string;
+}
+
+export interface MacroHex {
+  h3Index: string;
+  centerLat: number;
+  centerLng: number;
+  avgPrice: number;
+  count: number;
+  tier: 'discounted' | 'standard' | 'congested' | 'high_demand' | 'sold_out';
+  color: string;
+  boundary: [number, number][];
 }
 
 function formatPrice(val: number): string {
@@ -338,6 +351,22 @@ export default {
             ...corsHeaders,
             'Content-Type': 'application/json',
             'Cache-Control': 'public, max-age=60, s-maxage=300'
+          }
+        }
+      );
+    }
+
+    // Deliver precalculated high-level Uber H3 Resolution 4 macro hexagons
+    if (pathname === '/macro-hexes' || pathname === '/api/macro-hexes') {
+      const macroHexes = await getPrecalculatedMacroHexes(env);
+      return new Response(
+        JSON.stringify(macroHexes),
+        {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json',
+            'Cache-Control': 'public, max-age=120, s-maxage=600'
           }
         }
       );
@@ -862,4 +891,123 @@ async function migrateSupabaseThresholds(env: Env, apiKey: string): Promise<any>
     updatedStandardCount: Array.isArray(stdData) ? stdData.length : stdData,
     updatedDiscountCount: Array.isArray(discData) ? discData.length : discData
   };
+}
+
+let cachedMacroHexes: MacroHex[] | null = null;
+let lastMacroCalcTime = 0;
+
+/**
+ * Returns precalculated Uber H3 Resolution 4 macro hexagons representing regional averages.
+ * Stored in server memory and edge-cached to prevent on-page-load computation.
+ */
+export async function getPrecalculatedMacroHexes(env: Env, forceRefresh: boolean = false): Promise<MacroHex[]> {
+  const now = Date.now();
+  if (!forceRefresh && cachedMacroHexes && (now - lastMacroCalcTime) < 120000) {
+    return cachedMacroHexes;
+  }
+  const points = await fetchPointsFromSupabase(env);
+  cachedMacroHexes = computeMacroHexes(points);
+  lastMacroCalcTime = now;
+  return cachedMacroHexes;
+}
+
+/**
+ * Computes high-level Uber H3 Resolution 4 hexagons from granular Resolution 5 nodes.
+ * Calculates the average price for all cells within each parent hexagon and applies the tier color.
+ */
+export function computeMacroHexes(points: any[]): MacroHex[] {
+  const groups = new Map<string, { sum: number; count: number; soldCount: number; latSum: number; lngSum: number }>();
+
+  for (const pt of points) {
+    const lat = Number(pt.lat);
+    const lng = Number(pt.lng);
+    if (isNaN(lat) || isNaN(lng)) continue;
+
+    const cost = pt.total_monthly_fee ?? pt.monthly_service_fee ?? (pt.status === 'discounted' ? 55 : pt.status === 'congested' ? 143 : 120);
+    const isSold = pt.status === 'sold_out';
+
+    // Resolution 4 parent in Uber H3 hierarchy (area is ~7x larger than Res 5 cells)
+    let r4: string | null = null;
+    try {
+      const latLngToCell = (h3 as any).latLngToCell || (h3 as any).geoToH3;
+      const cellToParent = (h3 as any).cellToParent || (h3 as any).h3ToParent;
+      if (typeof latLngToCell === 'function' && typeof cellToParent === 'function') {
+        const r5 = latLngToCell(lat, lng, 5);
+        r4 = cellToParent(r5, 4);
+      }
+    } catch {
+      r4 = null;
+    }
+
+    if (!r4) continue;
+
+    if (!groups.has(r4)) {
+      groups.set(r4, { sum: 0, count: 0, soldCount: 0, latSum: 0, lngSum: 0 });
+    }
+    const g = groups.get(r4)!;
+    g.sum += Number(cost);
+    g.count++;
+    g.latSum += lat;
+    g.lngSum += lng;
+    if (isSold) g.soldCount++;
+  }
+
+  const macroHexes: MacroHex[] = [];
+
+  for (const [r4, g] of groups.entries()) {
+    const avgPrice = Math.round((g.sum / g.count) * 100) / 100;
+    let tier: 'discounted' | 'standard' | 'congested' | 'high_demand' | 'sold_out' = 'standard';
+    let color = '#38bdf8'; // Blue: $55 - $130
+
+    if (g.soldCount === g.count) {
+      tier = 'sold_out';
+      color = '#c084fc'; // Purple: unavailable
+    } else if (avgPrice >= 170) {
+      tier = 'high_demand';
+      color = '#ef4444'; // Red: $170+
+    } else if (avgPrice >= 130) {
+      tier = 'congested';
+      color = '#f97316'; // Orange: $130 - $170
+    } else if (avgPrice > 55) {
+      tier = 'standard';
+      color = '#38bdf8'; // Blue: $55 - $130
+    } else {
+      tier = 'discounted';
+      color = '#10b981'; // Green: $0 - $55
+    }
+
+    let boundary: [number, number][] = [];
+    let centerLat = g.latSum / g.count;
+    let centerLng = g.lngSum / g.count;
+
+    try {
+      const cellToBoundary = (h3 as any).cellToBoundary || (h3 as any).h3ToGeoBoundary;
+      if (typeof cellToBoundary === 'function') {
+        boundary = cellToBoundary(r4) as [number, number][];
+      }
+      const cellToLatLng = (h3 as any).cellToLatLng || (h3 as any).h3ToGeo;
+      if (typeof cellToLatLng === 'function') {
+        const center = cellToLatLng(r4);
+        centerLat = center[0];
+        centerLng = center[1];
+      }
+    } catch (err) {
+      console.warn('Error computing boundary for H3 index:', r4, err);
+    }
+
+    if (boundary.length >= 3) {
+      macroHexes.push({
+        h3Index: r4,
+        centerLat,
+        centerLng,
+        avgPrice,
+        count: g.count,
+        tier,
+        color,
+        boundary
+      });
+    }
+  }
+
+  return macroHexes;
 }

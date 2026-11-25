@@ -264,6 +264,17 @@ interface SurchargeRecord {
   isLiveVerified?: boolean;
 }
 
+interface MacroHex {
+  h3Index: string;
+  centerLat: number;
+  centerLng: number;
+  avgPrice: number;
+  count: number;
+  tier: 'discounted' | 'standard' | 'congested' | 'high_demand' | 'sold_out';
+  color: string;
+  boundary: [number, number][];
+}
+
 // Configurable Endpoints
 const SUPABASE_URL = (window as any).STARLINK_CONFIG?.SUPABASE_URL || 'https://lbwwynyvpvecgclvyqrv.supabase.co';
 const SUPABASE_ANON_KEY = (window as any).STARLINK_CONFIG?.SUPABASE_ANON_KEY || 'public-anon-key';
@@ -319,6 +330,7 @@ let markersLayerGroup: any = null;
 let activePinMarker: any = null;
 let activeSelectionHex: any = null;
 let rawSurchargeData: SurchargeRecord[] = [];
+let macroHexData: MacroHex[] = [];
 
 function formatMoney(val: any): string {
   if (val === null || val === undefined || isNaN(val)) return '$0';
@@ -731,12 +743,24 @@ function loadLeafletScript(): Promise<void> {
 }
 
 async function fetchSurchargeData() {
-  // 1. Primary: Load verified points via Cloudflare Worker edge cache
+  // 1. Primary: Load verified points and precalculated macro hexes via Cloudflare Worker edge cache
   const pointsUrl = workerApiUrl.value.replace(/\/api\/check-fee.*$/, '/api/points').replace(/\/check-fee.*$/, '/api/points');
+  const macroUrl = pointsUrl.replace(/\/api\/points.*$/, '/api/macro-hexes');
   try {
-    const resp = await fetch(pointsUrl);
-    if (resp.ok) {
-      const data = await resp.json();
+    const [pResp, mResp] = await Promise.all([
+      fetch(pointsUrl).catch(err => { console.warn('Worker points fetch failed:', err); return null; }),
+      fetch(macroUrl).catch(err => { console.warn('Worker macro hexes fetch failed:', err); return null; })
+    ]);
+
+    if (mResp && mResp.ok) {
+      const mData = await mResp.json();
+      if (Array.isArray(mData) && mData.length > 0) {
+        macroHexData = mData;
+      }
+    }
+
+    if (pResp && pResp.ok) {
+      const data = await pResp.json();
       if (Array.isArray(data) && data.length > 0) {
         rawSurchargeData = data;
         supabaseOnline.value = true;
@@ -746,7 +770,7 @@ async function fetchSurchargeData() {
       }
     }
   } catch (err) {
-    console.warn('Worker /api/points fetch attempt failed:', err);
+    console.warn('Worker fetch attempt failed:', err);
   }
 
   // 2. Secondary: Direct Supabase fetch if valid anon key configured
@@ -871,19 +895,25 @@ function renderMarkers() {
   const isOverview = mapInstance ? mapInstance.getZoom() <= 5 : true;
 
   if (isOverview) {
-    // Zoomed out (majority of US visible): render flat blended regional gradient map (no cells, no borders)
-    const macroPoints = getMacroMeshPoints(activeNodes, 160);
-    for (const pt of macroPoints) {
-      const tierKey = getTierKey(pt);
-      const meshAura = L.circle([pt.lat, pt.lng], {
-        radius: 260000, // 260 km regional ground radius for smooth overlapping gradient mesh
-        stroke: false,
+    // Overview mode (zoom <= 5): Precalculated Uber H3 Resolution 4 macro hexagons representing regional averages
+    for (const m of macroHexData) {
+      if (m.tier === 'sold_out' && !tierFilters.tierSoldOut) continue;
+      if (m.tier === 'discounted' && !tierFilters.tierDiscount) continue;
+      if (m.tier === 'standard' && !tierFilters.tierStandard) continue;
+      if (m.tier === 'congested' && !tierFilters.tierCongested) continue;
+      if (m.tier === 'high_demand' && !tierFilters.tierSurcharge) continue;
+
+      const hex = L.polygon(m.boundary, {
+        color: '#ffffff',
+        weight: 1.2,
+        opacity: 0.70,
+        fillColor: m.color,
+        fillOpacity: 0.60,
         interactive: false,
-        className: `starlink-mesh-aura starlink-mesh-${tierKey}`
+        className: 'starlink-macro-hex'
       });
-      markersLayerGroup.addLayer(meshAura);
+      markersLayerGroup.addLayer(hex);
     }
-    ensureSvgGradients();
     return;
   }
 
@@ -1975,6 +2005,12 @@ onBeforeUnmount(() => {
 :deep(.starlink-aura-sold_out) {
   fill: url(#hex-aura-sold_out) !important;
   stroke: none !important;
+}
+
+:deep(.starlink-macro-hex) {
+  pointer-events: none !important;
+  cursor: default !important;
+  transition: opacity 180ms ease;
 }
 
 :deep(.starlink-mesh-aura) {

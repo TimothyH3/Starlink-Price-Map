@@ -8,13 +8,21 @@
     "deploy": "wrangler deploy",
     "tail": "wrangler tail"
   },
-  "keywords": ["starlink", "surcharge", "cloudflare-worker", "postgis", "geospatial"],
+  "keywords": [
+    "starlink",
+    "surcharge",
+    "cloudflare-worker",
+    "postgis",
+    "geospatial"
+  ],
   "author": "Timothy Hansen",
   "license": "MIT",
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240925.0",
     "typescript": "^5.5.4",
     "wrangler": "^3.78.0"
+  },
+  "dependencies": {
+    "h3-js": "^4.5.0"
   }
 }
-

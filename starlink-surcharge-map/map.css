@@ -492,6 +492,13 @@ textarea,
   stroke: none !important;
 }
 
+/* Precalculated Uber H3 Macro Hexagons (Overview mode, zoom <= 5) */
+.starlink-macro-hex {
+  pointer-events: none !important;
+  cursor: default !important;
+  transition: opacity 180ms ease;
+}
+
 /* Macro Mesh Blended Gradient Layer (Zoomed-out Overview Mode) */
 .starlink-mesh-aura {
   pointer-events: none;
