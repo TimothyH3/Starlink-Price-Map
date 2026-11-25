@@ -208,7 +208,7 @@ export default {
 
     const url = new URL(request.url);
     const pathname = url.pathname;
-    const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || (env as any)['REDACTED'];
+    const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || '';
 
     // Ingest batch endpoint
     if (request.method === 'POST' && (pathname === '/ingest' || pathname === '/api/ingest')) {
@@ -434,7 +434,7 @@ export default {
  * Executes a deterministic scheduled sampling step across the Continental US
  */
 async function runScheduledSampling(env: Env): Promise<{ sampled: any[]; message: string }> {
-  const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || (env as any)['REDACTED'];
+  const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || '';
   if (!env.SUPABASE_URL || !supabaseKey) {
     return { sampled: [], message: 'Supabase credentials missing' };
   }
@@ -800,7 +800,7 @@ async function saveToSupabase(
  * Fetches all ingested surcharge & service cost nodes from Supabase
  */
 async function fetchPointsFromSupabase(env: Env): Promise<any[]> {
-  const apiKey = env.SUPABASE_SERVICE_ROLE_KEY || (env as any)['REDACTED'];
+  const apiKey = env.SUPABASE_SERVICE_ROLE_KEY || '';
   if (!env.SUPABASE_URL || !apiKey) return [];
 
   try {
