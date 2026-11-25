@@ -46,7 +46,7 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const corsHeaders: Record<string, string> = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       'Access-Control-Max-Age': '86400'
     };
@@ -59,15 +59,40 @@ export default {
       });
     }
 
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+    const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || (env as any)['REDACTED'];
+
+    // Ingest batch endpoint for background sampling pipeline
+    if (request.method === 'POST' && (pathname === '/ingest' || pathname === '/api/ingest')) {
+      try {
+        const body = await request.json() as any;
+        const records = Array.isArray(body) ? body : (body.records || [body]);
+        let savedCount = 0;
+        for (const rec of records) {
+          if (typeof rec.lat === 'number' && typeof rec.lng === 'number') {
+            await saveToSupabase(env, rec, supabaseKey);
+            savedCount++;
+          }
+        }
+        return new Response(
+          JSON.stringify({ success: true, count: savedCount }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } catch (err: any) {
+        return new Response(
+          JSON.stringify({ error: err?.message || 'Failed to ingest records' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
     if (request.method !== 'GET') {
       return new Response(
-        JSON.stringify({ error: 'Method not allowed. Use GET.' }),
+        JSON.stringify({ error: 'Method not allowed. Use GET or POST.' }),
         { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-
-    const url = new URL(request.url);
-    const pathname = url.pathname;
 
     // Health check endpoint
     if (pathname === '/health' || pathname === '/') {
@@ -131,7 +156,6 @@ export default {
 
     // Tier 1: Query Supabase PostGIS spatial cache (radius 25 km) unless forced
     let result: ServiceCostResult | null = null;
-    const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY || (env as any)['REDACTED'];
     if (!forceLive && env.SUPABASE_URL && supabaseKey) {
       result = await queryPostGISProximity(env, lat, lng, starlinkVerifyUrl, supabaseKey);
     }
@@ -455,11 +479,11 @@ async function saveToSupabase(
     p_lng: result.lng,
     p_surcharge_amount: result.surcharge_amount ?? 0,
     p_status: result.status,
-    p_sample_type: 'live_user_qualified',
+    p_sample_type: (result as any).sample_type || 'live_user_qualified',
     p_location_name: result.location_name,
     p_base_service_fee: result.base_service_fee ?? 120,
     p_service_price_adjustment: result.service_price_adjustment ?? 0,
-    p_total_monthly_fee: result.total_monthly_fee ?? 120,
+    p_total_monthly_fee: result.total_monthly_fee ?? (result as any).monthly_service_fee ?? 120,
     p_adjustment_description: result.adjustment_description || 'Service Price Adjustment'
   };
 

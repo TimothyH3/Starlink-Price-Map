@@ -1,6 +1,6 @@
 {
   "current_week_index": 48,
-  "blanket_cursor": 2,
+  "blanket_cursor": 29,
   "known_hotspots": [
     {
       "name": "Asheville Blue Ridge, NC",
@@ -51,7 +51,7 @@
       "last_surcharge": 0,
       "last_monthly_fee": 130.0,
       "consecutive_zeros": 0,
-      "last_checked": "2026-11-23T03:29:48.116583+00:00"
+      "last_checked": "2026-11-23T00:50:16.186929+00:00"
     },
     {
       "name": "76QWCJ7H+QJ",
@@ -60,56 +60,70 @@
       "last_surcharge": 0,
       "last_monthly_fee": 130.0,
       "consecutive_zeros": 0,
-      "last_checked": "2026-11-17T03:50:43.846398+00:00"
+      "last_checked": "2026-11-23T00:50:26.136594+00:00"
     },
     {
       "name": "Boone Watauga High Country, NC",
       "lat": 36.2168,
       "lng": -81.6758,
       "last_surcharge": 0,
-      "consecutive_zeros": 0
+      "consecutive_zeros": 0,
+      "last_monthly_fee": 60.5,
+      "last_checked": "2026-11-23T00:50:33.943095+00:00"
     },
     {
       "name": "Chattanooga Cumberland Plateau, TN",
       "lat": 35.0456,
       "lng": -85.3097,
       "last_surcharge": 0,
-      "consecutive_zeros": 0
+      "consecutive_zeros": 1,
+      "last_monthly_fee": 60.5,
+      "last_checked": "2026-11-23T16:07:11.318029+00:00"
     },
     {
       "name": "Knoxville Ridge Corridor, TN",
       "lat": 36.0104,
       "lng": -84.388,
       "last_surcharge": 0,
-      "consecutive_zeros": 0
+      "consecutive_zeros": 1,
+      "last_monthly_fee": 60.5,
+      "last_checked": "2026-11-24T02:56:55.437548+00:00"
     },
     {
       "name": "Dahlonega North GA Mtns, GA",
       "lat": 34.5262,
       "lng": -84.0713,
       "last_surcharge": 0,
-      "consecutive_zeros": 0
+      "consecutive_zeros": 0,
+      "last_monthly_fee": 143.0,
+      "last_checked": "2026-11-24T13:54:05.478229+00:00"
     },
     {
       "name": "Hazard Eastern Coalfields, KY",
       "lat": 37.2487,
       "lng": -83.4488,
       "last_surcharge": 0,
-      "consecutive_zeros": 0
+      "consecutive_zeros": 0,
+      "last_monthly_fee": 143.0,
+      "last_checked": "2026-11-24T16:22:02.267043+00:00"
     },
     {
       "name": "Charleston Kanawha Valley, WV",
       "lat": 38.3498,
       "lng": -81.6326,
       "last_surcharge": 0,
-      "consecutive_zeros": 0
+      "consecutive_zeros": 0,
+      "last_monthly_fee": 130.0,
+      "last_checked": "2026-11-24T16:34:45.287885+00:00"
     },
     {
       "name": "Roanoke Blue Ridge Valley, VA",
       "lat": 37.271,
       "lng": -79.9414,
       "last_surcharge": 0,
-      "consecutive_zeros": 0
+      "consecutive_zeros": 1,
+      "last_monthly_fee": 55.0,
+      "last_checked": "2026-11-24T16:49:00.861214+00:00"
     },
     {
       "name": "Shenandoah Valley, VA",
@@ -349,14 +363,50 @@
       "last_surcharge": 0,
       "last_monthly_fee": 130.0,
       "consecutive_zeros": 0,
-      "last_checked": "2026-11-23T03:29:57.061997+00:00"
+      "last_checked": "2026-11-23T00:50:45.825169+00:00"
+    },
+    {
+      "name": "10838 TX-71, Austin, TX 78735, USA",
+      "lat": 30.2838,
+      "lng": -97.9029,
+      "last_surcharge": 0,
+      "last_monthly_fee": 143.0,
+      "consecutive_zeros": 0,
+      "last_checked": "2026-11-24T13:54:14.349733+00:00"
+    },
+    {
+      "name": "J57G+X8 Ejido Pachuca, B.C., Mexico",
+      "lat": 32.6149,
+      "lng": -114.8242,
+      "last_surcharge": 0,
+      "last_monthly_fee": 633.62,
+      "consecutive_zeros": 0,
+      "last_checked": "2026-11-24T13:54:56.066779+00:00"
+    },
+    {
+      "name": "381 Hells Hollow Rd, Blue Ridge, GA 30513, USA",
+      "lat": 34.9459,
+      "lng": -84.4729,
+      "last_surcharge": 0,
+      "last_monthly_fee": 143.0,
+      "consecutive_zeros": 0,
+      "last_checked": "2026-11-24T13:55:41.186615+00:00"
+    },
+    {
+      "name": "86VG9HHC+9P",
+      "lat": 47.3784,
+      "lng": -89.4282,
+      "last_surcharge": 0,
+      "last_monthly_fee": 130.0,
+      "consecutive_zeros": 0,
+      "last_checked": "2026-11-24T16:49:20.956943+00:00"
     }
   ],
-  "hotspot_cursor": 6,
+  "hotspot_cursor": 14,
   "stats": {
-    "total_probes_run": 1147,
-    "high_demand_hits_found": 5,
+    "total_probes_run": 1198,
+    "high_demand_hits_found": 9,
     "cycles_completed": 0
   },
-  "last_run_timestamp": "2026-11-23T03:30:04.659989+00:00"
+  "last_run_timestamp": "2026-11-24T16:50:02.080925+00:00"
 }
