@@ -42,6 +42,7 @@ export interface ServiceCostResult {
 
 export interface MacroHex {
   h3Index: string;
+  resolution: number;
   centerLat: number;
   centerLng: number;
   avgPrice: number;
@@ -49,6 +50,12 @@ export interface MacroHex {
   tier: 'discounted' | 'standard' | 'congested' | 'high_demand' | 'sold_out';
   color: string;
   boundary: [number, number][];
+}
+
+export interface MacroHexBundle {
+  res4: MacroHex[];
+  res3: MacroHex[];
+  res2: MacroHex[];
 }
 
 function formatPrice(val: number): string {
@@ -356,11 +363,17 @@ export default {
       );
     }
 
-    // Deliver precalculated high-level Uber H3 Resolution 4 macro hexagons
+    // Deliver precalculated high-level Uber H3 macro hexagons (Res 4 regional, Res 3 national, Res 2 continental)
     if (pathname === '/macro-hexes' || pathname === '/api/macro-hexes') {
-      const macroHexes = await getPrecalculatedMacroHexes(env);
+      const bundle = await getPrecalculatedMacroHexes(env);
+      const resParam = url.searchParams.get('res');
+      let result: any = bundle;
+      if (resParam === '4') result = bundle.res4;
+      else if (resParam === '3') result = bundle.res3;
+      else if (resParam === '2') result = bundle.res2;
+
       return new Response(
-        JSON.stringify(macroHexes),
+        JSON.stringify(result),
         {
           status: 200,
           headers: {
@@ -893,29 +906,33 @@ async function migrateSupabaseThresholds(env: Env, apiKey: string): Promise<any>
   };
 }
 
-let cachedMacroHexes: MacroHex[] | null = null;
+let cachedMacroBundle: MacroHexBundle | null = null;
 let lastMacroCalcTime = 0;
 
 /**
- * Returns precalculated Uber H3 Resolution 4 macro hexagons representing regional averages.
+ * Returns precalculated Uber H3 macro hexagons representing regional & national averages.
  * Stored in server memory and edge-cached to prevent on-page-load computation.
  */
-export async function getPrecalculatedMacroHexes(env: Env, forceRefresh: boolean = false): Promise<MacroHex[]> {
+export async function getPrecalculatedMacroHexes(env: Env, forceRefresh: boolean = false): Promise<MacroHexBundle> {
   const now = Date.now();
-  if (!forceRefresh && cachedMacroHexes && (now - lastMacroCalcTime) < 120000) {
-    return cachedMacroHexes;
+  if (!forceRefresh && cachedMacroBundle && (now - lastMacroCalcTime) < 120000) {
+    return cachedMacroBundle;
   }
   const points = await fetchPointsFromSupabase(env);
-  cachedMacroHexes = computeMacroHexes(points);
+  cachedMacroBundle = {
+    res4: computeMacroHexes(points, 4),
+    res3: computeMacroHexes(points, 3),
+    res2: computeMacroHexes(points, 2)
+  };
   lastMacroCalcTime = now;
-  return cachedMacroHexes;
+  return cachedMacroBundle;
 }
 
 /**
- * Computes high-level Uber H3 Resolution 4 hexagons from granular Resolution 5 nodes.
+ * Computes high-level Uber H3 hexagons from granular Resolution 5 nodes for a given target resolution.
  * Calculates the average price for all cells within each parent hexagon and applies the tier color.
  */
-export function computeMacroHexes(points: any[]): MacroHex[] {
+export function computeMacroHexes(points: any[], targetRes: number = 4): MacroHex[] {
   const groups = new Map<string, { sum: number; count: number; soldCount: number; latSum: number; lngSum: number }>();
 
   for (const pt of points) {
@@ -926,25 +943,25 @@ export function computeMacroHexes(points: any[]): MacroHex[] {
     const cost = pt.total_monthly_fee ?? pt.monthly_service_fee ?? (pt.status === 'discounted' ? 55 : pt.status === 'congested' ? 143 : 120);
     const isSold = pt.status === 'sold_out';
 
-    // Resolution 4 parent in Uber H3 hierarchy (area is ~7x larger than Res 5 cells)
-    let r4: string | null = null;
+    // Parent cell in Uber H3 hierarchy (Res 4 = regional, Res 3 = national entire-US, Res 2 = continental)
+    let parentCell: string | null = null;
     try {
       const latLngToCell = (h3 as any).latLngToCell || (h3 as any).geoToH3;
       const cellToParent = (h3 as any).cellToParent || (h3 as any).h3ToParent;
       if (typeof latLngToCell === 'function' && typeof cellToParent === 'function') {
         const r5 = latLngToCell(lat, lng, 5);
-        r4 = cellToParent(r5, 4);
+        parentCell = cellToParent(r5, targetRes);
       }
     } catch {
-      r4 = null;
+      parentCell = null;
     }
 
-    if (!r4) continue;
+    if (!parentCell) continue;
 
-    if (!groups.has(r4)) {
-      groups.set(r4, { sum: 0, count: 0, soldCount: 0, latSum: 0, lngSum: 0 });
+    if (!groups.has(parentCell)) {
+      groups.set(parentCell, { sum: 0, count: 0, soldCount: 0, latSum: 0, lngSum: 0 });
     }
-    const g = groups.get(r4)!;
+    const g = groups.get(parentCell)!;
     g.sum += Number(cost);
     g.count++;
     g.latSum += lat;
@@ -954,7 +971,7 @@ export function computeMacroHexes(points: any[]): MacroHex[] {
 
   const macroHexes: MacroHex[] = [];
 
-  for (const [r4, g] of groups.entries()) {
+  for (const [parentCell, g] of groups.entries()) {
     const avgPrice = Math.round((g.sum / g.count) * 100) / 100;
     let tier: 'discounted' | 'standard' | 'congested' | 'high_demand' | 'sold_out' = 'standard';
     let color = '#38bdf8'; // Blue: $55 - $130
@@ -983,21 +1000,22 @@ export function computeMacroHexes(points: any[]): MacroHex[] {
     try {
       const cellToBoundary = (h3 as any).cellToBoundary || (h3 as any).h3ToGeoBoundary;
       if (typeof cellToBoundary === 'function') {
-        boundary = cellToBoundary(r4) as [number, number][];
+        boundary = cellToBoundary(parentCell) as [number, number][];
       }
       const cellToLatLng = (h3 as any).cellToLatLng || (h3 as any).h3ToGeo;
       if (typeof cellToLatLng === 'function') {
-        const center = cellToLatLng(r4);
+        const center = cellToLatLng(parentCell);
         centerLat = center[0];
         centerLng = center[1];
       }
     } catch (err) {
-      console.warn('Error computing boundary for H3 index:', r4, err);
+      console.warn('Error computing boundary for H3 index:', parentCell, err);
     }
 
     if (boundary.length >= 3) {
       macroHexes.push({
-        h3Index: r4,
+        h3Index: parentCell,
+        resolution: targetRes,
         centerLat,
         centerLng,
         avgPrice,

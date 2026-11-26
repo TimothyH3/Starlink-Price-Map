@@ -331,6 +331,8 @@ let activePinMarker: any = null;
 let activeSelectionHex: any = null;
 let rawSurchargeData: SurchargeRecord[] = [];
 let macroHexData: MacroHex[] = [];
+let megaHexData: MacroHex[] = [];
+let gigaHexData: MacroHex[] = [];
 
 function formatMoney(val: any): string {
   if (val === null || val === undefined || isNaN(val)) return '$0';
@@ -710,9 +712,16 @@ async function initMap() {
 
   ensureSvgGradients();
 
-  let lastZoomMode = mapInstance.getZoom() <= 5 ? 'overview' : 'cells';
+  function getZoomMode(z: number): string {
+    if (z <= 3) return 'continental';
+    if (z === 4) return 'national';
+    if (z === 5) return 'regional';
+    return 'cells';
+  }
+
+  let lastZoomMode = getZoomMode(mapInstance.getZoom());
   mapInstance.on('zoomend', () => {
-    const currentMode = mapInstance.getZoom() <= 5 ? 'overview' : 'cells';
+    const currentMode = getZoomMode(mapInstance.getZoom());
     if (currentMode !== lastZoomMode) {
       lastZoomMode = currentMode;
       renderMarkers();
@@ -754,8 +763,14 @@ async function fetchSurchargeData() {
 
     if (mResp && mResp.ok) {
       const mData = await mResp.json();
-      if (Array.isArray(mData) && mData.length > 0) {
+      if (Array.isArray(mData)) {
         macroHexData = mData;
+        megaHexData = mData;
+        gigaHexData = mData;
+      } else if (mData && typeof mData === 'object') {
+        macroHexData = mData.res4 || [];
+        megaHexData = mData.res3 || [];
+        gigaHexData = mData.res2 || [];
       }
     }
 
@@ -892,11 +907,10 @@ function renderMarkers() {
   // Ensure SVG gradients exist
   ensureSvgGradients();
 
-  const isOverview = mapInstance ? mapInstance.getZoom() <= 5 : true;
+  const zoom = mapInstance ? mapInstance.getZoom() : 5;
 
-  if (isOverview) {
-    // Overview mode (zoom <= 5): Precalculated Uber H3 Resolution 4 macro hexagons representing regional averages
-    for (const m of macroHexData) {
+  function renderMacroHexList(list: MacroHex[]) {
+    for (const m of list) {
       if (m.tier === 'sold_out' && !tierFilters.tierSoldOut) continue;
       if (m.tier === 'discounted' && !tierFilters.tierDiscount) continue;
       if (m.tier === 'standard' && !tierFilters.tierStandard) continue;
@@ -914,6 +928,20 @@ function renderMarkers() {
       });
       markersLayerGroup.addLayer(hex);
     }
+  }
+
+  // Outermost layer: when zoomed out to view the entire US (zoom <= 3: continental Res 2; zoom 4: national Res 3)
+  if (zoom <= 3) {
+    renderMacroHexList(gigaHexData.length > 0 ? gigaHexData : (megaHexData.length > 0 ? megaHexData : macroHexData));
+    return;
+  }
+  if (zoom === 4) {
+    renderMacroHexList(megaHexData.length > 0 ? megaHexData : macroHexData);
+    return;
+  }
+  if (zoom === 5) {
+    // Intermediate regional layer (zoom 5: Res 4)
+    renderMacroHexList(macroHexData);
     return;
   }
 
