@@ -379,7 +379,7 @@ export default {
           headers: {
             ...corsHeaders,
             'Content-Type': 'application/json',
-            'Cache-Control': 'public, max-age=120, s-maxage=600'
+            'Cache-Control': 'public, max-age=30, s-maxage=60'
           }
         }
       );

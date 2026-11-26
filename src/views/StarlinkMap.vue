@@ -713,8 +713,7 @@ async function initMap() {
   ensureSvgGradients();
 
   function getZoomMode(z: number): string {
-    if (z <= 3) return 'continental';
-    if (z === 4) return 'national';
+    if (z <= 4) return 'outermost';
     if (z === 5) return 'regional';
     return 'cells';
   }
@@ -726,7 +725,6 @@ async function initMap() {
       lastZoomMode = currentMode;
       renderMarkers();
     }
-    ensureSvgGradients();
   });
 
   mapInstance.on('click', (e: any) => {
@@ -751,10 +749,74 @@ function loadLeafletScript(): Promise<void> {
   });
 }
 
+// Fallback H3 parent aggregation if server cache is stale
+function computeClientMacroHexes(points: any[], targetRes: number): MacroHex[] {
+  if (!points || points.length === 0) return [];
+  const groups = new Map<string, { sum: number; count: number; soldCount: number; latSum: number; lngSum: number }>();
+  for (const pt of points) {
+    const lat = Number(pt.lat);
+    const lng = Number(pt.lng);
+    if (isNaN(lat) || isNaN(lng)) continue;
+    const cost = pt.total_monthly_fee ?? pt.monthly_service_fee ?? (pt.status === 'discounted' ? 55 : pt.status === 'congested' ? 143 : 120);
+    const isSold = pt.status === 'sold_out';
+    let parentCell: string | null = null;
+    try {
+      const latLngToCell = (h3 as any).latLngToCell || (h3 as any).geoToH3;
+      const cellToParent = (h3 as any).cellToParent || (h3 as any).h3ToParent;
+      if (typeof latLngToCell === 'function' && typeof cellToParent === 'function') {
+        const r5 = latLngToCell(lat, lng, 5);
+        parentCell = cellToParent(r5, targetRes);
+      }
+    } catch {
+      parentCell = null;
+    }
+    if (!parentCell) continue;
+    if (!groups.has(parentCell)) groups.set(parentCell, { sum: 0, count: 0, soldCount: 0, latSum: 0, lngSum: 0 });
+    const g = groups.get(parentCell)!;
+    g.sum += Number(cost);
+    g.count++;
+    g.latSum += lat;
+    g.lngSum += lng;
+    if (isSold) g.soldCount++;
+  }
+  const result: MacroHex[] = [];
+  for (const [cell, g] of groups.entries()) {
+    const avgPrice = Math.round((g.sum / g.count) * 100) / 100;
+    let tier: 'discounted' | 'standard' | 'congested' | 'high_demand' | 'sold_out' = 'standard';
+    let color = '#38bdf8';
+    if (g.soldCount === g.count) { tier = 'sold_out'; color = '#c084fc'; }
+    else if (avgPrice >= 170) { tier = 'high_demand'; color = '#ef4444'; }
+    else if (avgPrice >= 130) { tier = 'congested'; color = '#f97316'; }
+    else if (avgPrice > 55) { tier = 'standard'; color = '#38bdf8'; }
+    else { tier = 'discounted'; color = '#10b981'; }
+
+    let boundary: [number, number][] = [];
+    try {
+      const cellToBoundary = (h3 as any).cellToBoundary || (h3 as any).h3ToGeoBoundary;
+      if (typeof cellToBoundary === 'function') boundary = cellToBoundary(cell);
+    } catch {}
+
+    if (boundary && boundary.length >= 3) {
+      result.push({
+        h3Index: cell,
+        resolution: targetRes,
+        centerLat: g.latSum / g.count,
+        centerLng: g.lngSum / g.count,
+        avgPrice,
+        count: g.count,
+        tier,
+        color,
+        boundary
+      });
+    }
+  }
+  return result;
+}
+
 async function fetchSurchargeData() {
   // 1. Primary: Load verified points and precalculated macro hexes via Cloudflare Worker edge cache
-  const pointsUrl = workerApiUrl.value.replace(/\/api\/check-fee.*$/, '/api/points').replace(/\/check-fee.*$/, '/api/points');
-  const macroUrl = pointsUrl.replace(/\/api\/points.*$/, '/api/macro-hexes');
+  const pointsUrl = workerApiUrl.value.replace(/\/api\/check-fee.*$/, '/api/points').replace(/\/check-fee.*$/, '/api/points') + '?v=2.2.0';
+  const macroUrl = pointsUrl.replace(/\/api\/points.*$/, '/api/macro-hexes?v=2.2.0');
   try {
     const [pResp, mResp] = await Promise.all([
       fetch(pointsUrl).catch(err => { console.warn('Worker points fetch failed:', err); return null; }),
@@ -763,14 +825,12 @@ async function fetchSurchargeData() {
 
     if (mResp && mResp.ok) {
       const mData = await mResp.json();
-      if (Array.isArray(mData)) {
-        macroHexData = mData;
-        megaHexData = mData;
-        gigaHexData = mData;
-      } else if (mData && typeof mData === 'object') {
+      if (mData && typeof mData === 'object' && !Array.isArray(mData)) {
         macroHexData = mData.res4 || [];
         megaHexData = mData.res3 || [];
         gigaHexData = mData.res2 || [];
+      } else if (Array.isArray(mData)) {
+        macroHexData = mData;
       }
     }
 
@@ -778,6 +838,12 @@ async function fetchSurchargeData() {
       const data = await pResp.json();
       if (Array.isArray(data) && data.length > 0) {
         rawSurchargeData = data;
+        if (gigaHexData.length === 0) {
+          gigaHexData = computeClientMacroHexes(data, 2);
+        }
+        if (macroHexData.length === 0) {
+          macroHexData = computeClientMacroHexes(data, 4);
+        }
         supabaseOnline.value = true;
         computeStats();
         renderMarkers();
@@ -930,13 +996,10 @@ function renderMarkers() {
     }
   }
 
-  // Outermost layer: when zoomed out to view the entire US (zoom <= 3: continental Res 2; zoom 4: national Res 3)
-  if (zoom <= 3) {
-    renderMacroHexList(gigaHexData.length > 0 ? gigaHexData : (megaHexData.length > 0 ? megaHexData : macroHexData));
-    return;
-  }
-  if (zoom === 4) {
-    renderMacroHexList(megaHexData.length > 0 ? megaHexData : macroHexData);
+  // Outermost layer: when zoomed out to view the entire US (zoom <= 4: Resolution 2 mega hexes)
+  if (zoom <= 4) {
+    const list = gigaHexData.length > 0 ? gigaHexData : (megaHexData.length > 0 ? megaHexData : macroHexData);
+    renderMacroHexList(list);
     return;
   }
   if (zoom === 5) {
@@ -945,22 +1008,7 @@ function renderMarkers() {
     return;
   }
 
-  // Detailed Cells Mode (zoom >= 6):
-  // Pass 1: Render outer fading gradient auras spanning 125 km surrounding area
-  for (const cell of uniqueCells) {
-    const tierKey = getTierKey(cell);
-    const aura = L.circle([cell.centerLat, cell.centerLng], {
-      radius: 125000, // 125 km real-world geographic ground radius
-      stroke: false,
-      interactive: false,
-      className: `starlink-hex-aura starlink-aura-${tierKey}`
-    });
-    markersLayerGroup.addLayer(aura);
-  }
-
-  ensureSvgGradients();
-
-  // Pass 2: Render translucent central Starlink cell hexagons (revealing map features underneath)
+  // Detailed Cells Mode (zoom >= 6, Zero glowing gradients):
   let count = 0;
   for (const cell of uniqueCells) {
     count++;
