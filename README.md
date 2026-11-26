@@ -180,13 +180,8 @@ To run a local copy of the project or deploy the worker, follow these steps.
 ## Roadmap
 
 - [x] Baseline Continental US grid sampling
-- [x] Native Cloudflare Workers edge Cron Trigger sampling
-- [x] Ray-casting water body exclusion (Great Lakes and coastal waters)
-- [x] Threshold updates ($55 discount, $55–$130 standard, $130–$170 congested, $170+ high demand)
-- [x] 25 km PostGIS spatial proximity cache
-- [x] OpenStreetMap Nominatim search integration
 - [ ] Historical rate change tracking per cell
-- [ ] Multi-stop travel route cost calculator
+- [ ] Complete map coverage
 
 See the [open issues](https://github.com/TimothyH3/Starlink-Price-Map/issues) for proposed features and bug reports.
 
