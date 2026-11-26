@@ -38,6 +38,7 @@
 </div>
 
 
+<img width="1437" height="815" alt="image" src="https://github.com/user-attachments/assets/b5b77a40-d5ad-40ac-a692-a7c93c02787a" />
 
 <!-- TABLE OF CONTENTS -->
 <details>
@@ -65,11 +66,8 @@
 </details>
 
 
-
 <!-- ABOUT THE PROJECT -->
 ## About The Project
-
-[![Starlink Price Map Screenshot][product-screenshot]](https://tjhansen.net/starlink-surcharge-map)
 
 This application maps Starlink Residential service pricing across the continental United States. It identifies regional price adjustments, base rates, upfront hardware surcharges, and cell capacity statuses.
 
